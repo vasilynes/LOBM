@@ -2,7 +2,6 @@ from sortedcontainers import SortedDict
 import json
 import polars as pl
 from pathlib import Path
-from datetime import datetime
 from itertools import islice
 import numpy as np
 import argparse
@@ -10,7 +9,6 @@ import argparse
 LEVELS = 20
 OFI_LEVELS = 10
 BATCH_SIZE = 300000
-STRICT = True
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Script for constructing data from snapshot and stream')
@@ -68,6 +66,15 @@ def compute_ofi_per_level(prev_bids, prev_asks, curr_bids, curr_asks, levels=OFI
 
     return (bid_delta - ask_delta).tolist()
 
+def compute_mid_spread(best_ask, best_bid):
+    if best_ask <= best_bid:
+        raise ValueError(
+            f"Crossed spread: best_ask={best_ask}, best_bid={best_bid}"
+        )
+    mid = (best_bid + best_ask) / 2
+    spread = best_ask - best_bid
+    return mid, spread
+
 def update(bids, asks, event):
     for price, qty in event['b']:
         key = -float(price)
@@ -85,6 +92,17 @@ def update(bids, asks, event):
 def build_lob(snapshot_path, stream_path, levels=LEVELS, ofi_levels=OFI_LEVELS):
     with open(snapshot_path) as f:
         snapshot = json.load(f)
+    if snapshot['bids'] and snapshot['asks']:
+        snapshot_best_ask = float(snapshot['asks'][0][0])
+        snapshot_best_bid = float(snapshot['bids'][0][0])
+        if snapshot_best_ask <= snapshot_best_bid:
+            raise ValueError(
+                f"Snapshot has crossed spread: best_ask={snapshot_best_ask}, best_bid={snapshot_best_bid}"
+            )
+    else:
+        raise RuntimeError(
+            f"Snapshot {'bids' if not snapshot['bids'] else 'asks'} are empty"
+        )
 
     bids = SortedDict()
     asks = SortedDict()
@@ -100,75 +118,69 @@ def build_lob(snapshot_path, stream_path, levels=LEVELS, ofi_levels=OFI_LEVELS):
     prev_asks = list(islice(asks.items(), ofi_levels))
 
     bridged = False
-    with open(stream_path) as f:
-        for line in f:
-            event = json.loads(line)
+    event = None
+    prev_ts = None
+    try:
+        with open(stream_path) as f:
+            for line in f:
+                event = json.loads(line)
 
-            if event['u'] <= last_update_id:
-                continue
+                if event['u'] <= last_update_id:
+                    continue
 
-            if not bridged:
-                # first event bridging check
-                if not (event['U'] <= last_update_id + 1 <= event['u']):
-                    raise RuntimeError(f"First event does not bridge snapshot")
-                bridged = True
-            else:
-                if event['U'] != last_update_id + 1:
-                    raise RuntimeError(f"Gap detected: expected U={last_update_id + 1}, got U={event['U']}")
-
-            update(bids, asks, event)
-            last_update_id = event['u']
-
-            top_bids = [(-k, v) for k, v in islice(bids.items(), levels)] 
-            top_asks = list(islice(asks.items(), levels))
-
-            try:
-                mid = (top_bids[0][0] + top_asks[0][0]) / 2
-            except (IndexError, TypeError) as e:
-                print(f"Mid price calculation errored, event timestamp: {event.get('E', 'unknown')}, error: {e}")
-                if STRICT:
-                    raise 
+                if not bridged:
+                    # first event bridging check
+                    if not (event['U'] <= last_update_id + 1 <= event['u']):
+                        raise RuntimeError(f"First event does not bridge snapshot")
+                    bridged = True
                 else:
-                    print('Defaulting to null...')
-                    mid = None
+                    if event['U'] != last_update_id + 1:
+                        raise RuntimeError(f"Gap detected: expected U={last_update_id + 1}, got U={event['U']}")
 
-            try:
-                spread = top_asks[0][0] - top_bids[0][0]
-            except (IndexError, TypeError) as e:
-                print(f"Spread calculation errored, event timestamp: {event.get('E', 'unknown')}, error: {e}")
-                if STRICT:
-                    raise 
-                else:
-                    print('Defaulting to null...')
-                    spread = None
+                ts = event['E']
+                if prev_ts is not None and ts < prev_ts:
+                    raise RuntimeError(f"Reversed timestamps: {ts} current < {prev_ts} previous")
+                prev_ts = ts
 
-            try:
+                update(bids, asks, event)
+                if not bids or not asks:
+                    raise RuntimeError(
+                        f"Empty {'bids' if not bids else 'asks'} after update"
+                    )
+                last_update_id = event['u']
+
+                top_bids = [(-k, v) for k, v in islice(bids.items(), levels)] 
+                top_asks = list(islice(asks.items(), levels))
+
+                best_ask = top_asks[0][0]
+                best_bid = top_bids[0][0]
+                mid, spread = compute_mid_spread(best_ask, best_bid)
                 ofi = compute_ofi_per_level(prev_bids, prev_asks, top_bids, top_asks)
-            except (IndexError, TypeError) as e:
-                print(f"OFI calculation errored, event timestamp: {event.get('E', 'unknown')}, error: {e}")
-                if STRICT:
-                    raise 
-                print('Defaulting to null...')
-                ofi = [None] * ofi_levels
-            finally:
+
                 prev_bids = top_bids[:ofi_levels]
                 prev_asks = top_asks[:ofi_levels]
 
-            while len(top_bids) < levels:
-                top_bids.append((np.nan, np.nan))
-            while len(top_asks) < levels:
-                top_asks.append((np.nan, np.nan))
+                while len(top_bids) < levels:
+                    top_bids.append((np.nan, np.nan))
+                while len(top_asks) < levels:
+                    top_asks.append((np.nan, np.nan))
 
-            row = [event['E']]
-            # Cluster features for better compression
-            row += [float(p) for p, _ in top_bids]
-            row += [float(q) for _, q in top_bids]
-            row += [float(p) for p, _ in top_asks]
-            row += [float(q) for _, q in top_asks]
-            row.extend(ofi)
-            row.extend([mid, spread])
+                row = [event['E']]
+                # Cluster features for better compression
+                row += [float(p) for p, _ in top_bids]
+                row += [float(q) for _, q in top_bids]
+                row += [float(p) for p, _ in top_asks]
+                row += [float(q) for _, q in top_asks]
+                row.extend(ofi)
+                row.extend([mid, spread])
 
-            yield row
+                yield row
+        if not bridged:
+            raise RuntimeError('Stream ended without bridging')
+    except (IndexError, ValueError, RuntimeError) as e:
+        ts = event.get('E', 'unknown') if event is not None else 'event is None'
+        raise RuntimeError(f"Stream iteration errored at event timestamp: {ts}") from e
+
 
 def write_parquet(batch, cols, file_idx, output_dir):
     schema = {'timestamp': pl.Int64}
@@ -182,6 +194,7 @@ def write_parquet(batch, cols, file_idx, output_dir):
     )
     output_path = output_dir / f"lob20_{file_idx:05d}.parquet"
     df.write_parquet(output_path, compression='zstd')
+    print(f"Written batch {file_idx}, {len(batch)} rows -> {output_path}")
 
 def save_parquet(records_generator, output_dir, level=LEVELS, ofi_levels=OFI_LEVELS, batch_size=BATCH_SIZE):
     output_dir = Path(output_dir)
@@ -210,7 +223,6 @@ def save_parquet(records_generator, output_dir, level=LEVELS, ofi_levels=OFI_LEV
 
 if __name__ == '__main__':
     args = parse_args()
-    today = datetime.now().strftime('%Y-%m-%d')   
     stream_path = Path(f"data/raw/{args.date}/stream.jsonl")
     snapshot_path = Path(f"data/raw/{args.date}/snapshot.json")
     output_dir = Path(f"data/books/{args.date}")
