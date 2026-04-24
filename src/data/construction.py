@@ -5,11 +5,18 @@ from pathlib import Path
 from datetime import datetime
 from itertools import islice
 import numpy as np
+import argparse
 
 LEVEL = 20
 OFI_LEVELS = 10
 BATCH_SIZE = 300000
 STRICT = True
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Script for constructing data from snapshot and stream')
+    parser.add_argument('--date', '-d', required=True, help='Date used to find the snapshot and stream records')
+
+    return parser.parse_args()
 
 def to_array(levels_list, n):
     arr = np.full((n, 2), np.nan)
@@ -202,10 +209,11 @@ def save_parquet(records_generator, output_dir, level=LEVEL):
         write_parquet(batch, cols, file_idx, output_dir)
 
 if __name__ == '__main__':
+    args = parse_args()
     today = datetime.now().strftime('%Y-%m-%d')   
-    stream_path = Path(f"data/raw/{today}/stream.jsonl")
-    snapshot_path = Path(f"data/raw/{today}/snapshot.json")
-    output_dir = Path(f"data/books/{today}")
+    stream_path = Path(f"data/raw/{args.date}/stream.jsonl")
+    snapshot_path = Path(f"data/raw/{args.date}/snapshot.json")
+    output_dir = Path(f"data/books/{args.date}")
 
     rows = build_lob(snapshot_path, stream_path)
     save_parquet(rows, output_dir)
