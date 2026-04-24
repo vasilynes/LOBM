@@ -7,7 +7,7 @@ from itertools import islice
 import numpy as np
 import argparse
 
-LEVEL = 20
+LEVELS = 20
 OFI_LEVELS = 10
 BATCH_SIZE = 300000
 STRICT = True
@@ -82,7 +82,7 @@ def update(bids, asks, event):
         else:
             asks[key] = float(qty)
 
-def build_lob(snapshot_path, stream_path):
+def build_lob(snapshot_path, stream_path, levels=LEVELS, ofi_levels=OFI_LEVELS):
     with open(snapshot_path) as f:
         snapshot = json.load(f)
 
@@ -96,8 +96,8 @@ def build_lob(snapshot_path, stream_path):
 
     last_update_id = snapshot['lastUpdateId']
 
-    prev_bids = [(-k, v) for k, v in islice(bids.items(), OFI_LEVELS)]
-    prev_asks = list(islice(asks.items(), OFI_LEVELS))
+    prev_bids = [(-k, v) for k, v in islice(bids.items(), ofi_levels)]
+    prev_asks = list(islice(asks.items(), ofi_levels))
 
     bridged = False
     with open(stream_path) as f:
@@ -119,8 +119,8 @@ def build_lob(snapshot_path, stream_path):
             update(bids, asks, event)
             last_update_id = event['u']
 
-            top_bids = [(-k, v) for k, v in islice(bids.items(), LEVEL)] 
-            top_asks = list(islice(asks.items(), LEVEL))
+            top_bids = [(-k, v) for k, v in islice(bids.items(), levels)] 
+            top_asks = list(islice(asks.items(), levels))
 
             try:
                 mid = (top_bids[0][0] + top_asks[0][0]) / 2
@@ -149,14 +149,14 @@ def build_lob(snapshot_path, stream_path):
                 if STRICT:
                     raise 
                 print('Defaulting to null...')
-                ofi = [None] * OFI_LEVELS
+                ofi = [None] * ofi_levels
             finally:
-                prev_bids = top_bids[:OFI_LEVELS]
-                prev_asks = top_asks[:OFI_LEVELS]
+                prev_bids = top_bids[:ofi_levels]
+                prev_asks = top_asks[:ofi_levels]
 
-            while len(top_bids) < LEVEL:
+            while len(top_bids) < levels:
                 top_bids.append((np.nan, np.nan))
-            while len(top_asks) < LEVEL:
+            while len(top_asks) < levels:
                 top_asks.append((np.nan, np.nan))
 
             row = [event['E']]
@@ -183,7 +183,7 @@ def write_parquet(batch, cols, file_idx, output_dir):
     output_path = output_dir / f"lob20_{file_idx:05d}.parquet"
     df.write_parquet(output_path, compression='zstd')
 
-def save_parquet(records_generator, output_dir, level=LEVEL):
+def save_parquet(records_generator, output_dir, level=LEVELS, ofi_levels=OFI_LEVELS, batch_size=BATCH_SIZE):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     batch = []
@@ -195,12 +195,12 @@ def save_parquet(records_generator, output_dir, level=LEVEL):
     cols += [f"bid_q{i}" for i in range(level)]
     cols += [f"ask_p{i}" for i in range(level)]
     cols += [f"ask_q{i}" for i in range(level)]
-    cols += [f"ofi_{i}" for i in range(OFI_LEVELS)]
+    cols += [f"ofi_{i}" for i in range(ofi_levels)]
     cols.extend(['mid', 'spread'])
 
     for row in records_generator:
         batch.append(row)
-        if len(batch) >= BATCH_SIZE:
+        if len(batch) >= batch_size:
             write_parquet(batch, cols, file_idx, output_dir)
             batch = []
             file_idx += 1
