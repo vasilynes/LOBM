@@ -6,7 +6,7 @@ from datetime import datetime
 from tqdm import tqdm
 import aiohttp
 
-BATCH_SIZE = 100
+BATCH_SIZE = 100000
 subscribe_msg = {
     'method': 'SUBSCRIBE',
     'params': ['btcusdt@depth@100ms'],
@@ -35,7 +35,7 @@ async def collect_order_book():
         # Subscribe
         await websocket.send(json.dumps(subscribe_msg))
         response = await websocket.recv()
-        print(f"Subscription response: {response}")
+        tqdm.write(f"Subscription response: {response}")
 
         msg_queue = asyncio.Queue()
         reader_task = asyncio.create_task(ws_reader(websocket, msg_queue))
@@ -49,10 +49,10 @@ async def collect_order_book():
                 snapshot_last_id = snapshot['lastUpdateId']
                 if snapshot_last_id >= first_U:
                     break
-                print(f"Snapshot too old ({snapshot_last_id} < {first_U}), retrying...")
+                tqdm.write(f"Snapshot too old ({snapshot_last_id} < {first_U}), retrying...")
                 await asyncio.sleep(2)    # Do not hammer API
 
-        print(f"Snapshot lastUpdateId: {snapshot_last_id}")
+        tqdm.write(f"Snapshot lastUpdateId: {snapshot_last_id}")
 
         with open(snapshot_path, 'w') as f:
             json.dump(snapshot, f)
@@ -78,12 +78,12 @@ async def collect_order_book():
 
                 if prev_u is None:
                     if not (current_U <= snapshot_last_id + 1 <= current_u):
-                        print(f"Skipping non-bridging event: U={current_U}, u={current_u}, snapshot={snapshot_last_id}")
+                        tqdm.write(f"Skipping non-bridging event: U={current_U}, u={current_u}, snapshot={snapshot_last_id}")
                         continue
-                    print(f"Synchronized, first event: U={current_U}, u={current_u}")
+                    tqdm.write(f"Synchronized, first event: U={current_U}, u={current_u}")
                 else:
                     if current_U != prev_u + 1:
-                        print(f"Gap detected: expected U={prev_u + 1}, got U={current_U}. Re-synchronizing...")
+                        tqdm.write(f"Gap detected: expected U={prev_u + 1}, got U={current_U}. Re-synchronizing...")
                         reader_task.cancel()
                         raise SystemExit(1)
 
@@ -93,7 +93,7 @@ async def collect_order_book():
                 count += 1
                 pbar.update(1)
             else:
-                print('Batch exhausted, finishing...')
+                tqdm.write('Batch exhausted, finishing...')
 
             reader_task.cancel()
             pbar.close()
@@ -102,4 +102,4 @@ if __name__ == '__main__':
     try:
         asyncio.run(collect_order_book())
     except KeyboardInterrupt:
-        print("\nStopped by user")
+        tqdm.write("\nStopped by user")
