@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 from tqdm import tqdm
 import aiohttp
+import aiofiles
 
 BATCH_SIZE = 100000
 subscribe_msg = {
@@ -50,14 +51,14 @@ async def collect_order_book():
                 if snapshot_last_id >= first_U:
                     break
                 tqdm.write(f"Snapshot too old ({snapshot_last_id} < {first_U}), retrying...")
-                await asyncio.sleep(2)    # Do not hammer API
+                await asyncio.sleep(2) 
 
         tqdm.write(f"Snapshot lastUpdateId: {snapshot_last_id}")
 
         with open(snapshot_path, 'w') as f:
             json.dump(snapshot, f)
 
-        with open(data_path, 'a') as f:
+        async with aiofiles.open(data_path, 'a') as f:
             count = 0
             pbar = tqdm(total=BATCH_SIZE, desc='Collecting messages', unit='msg')
 
@@ -87,8 +88,7 @@ async def collect_order_book():
                         reader_task.cancel()
                         raise SystemExit(1)
 
-                f.write(json.dumps(msg) + '\n')
-                f.flush()
+                await f.write(json.dumps(msg) + '\n')
                 prev_u = current_u
                 count += 1
                 pbar.update(1)
