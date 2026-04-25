@@ -18,59 +18,6 @@ def parse_args():
 
     return parser.parse_args()
 
-def to_array(
-        levels: list[tuple[float, float]], 
-        n: int
-    ) -> NDArray[np.float64]:
-    """Return a 2D array of levels of length n, possibly padded with np.nan."""
-    arr = np.full((n, 2), np.nan)
-    k = min(len(levels), n)
-    if k > 0:
-        arr[:k] = levels[:k]
-    return arr
-
-def compute_delta(
-        curr: NDArray[np.float64], 
-        prev: NDArray[np.float64], 
-        curr_present: NDArray[np.bool_], 
-        prev_present: NDArray[np.bool_], 
-        comparator: Callable[[NDArray[np.float64], NDArray[np.float64]], NDArray[np.bool_]]
-    ) -> NDArray[np.float64]:
-    """
-    Compute delta of the volumes of levels from one order side.
-
-    curr: current price-volume levels.
-    prev: previous price-volume levels.
-    curr_present: mask for current non-NaN levels.
-    prev_present: mask for previous non-NaN levels.
-    comparator: callable to decide, whether price improved.
-    """
-    presence = curr_present & prev_present
-    unchanged = curr[:,0] == prev[:,0]
-    improved = comparator(curr[:,0], prev[:,0])
-
-    return np.where(
-        presence,    # if both levels are non-NaN
-        np.where(
-            unchanged,  # if price didn't change
-            curr[:,1] - prev[:,1],  # take volume delta
-            np.where(   
-                improved,  # if price improved
-                curr[:,1], # take current volume
-                -prev[:,1] # else take previous negative volume
-            )
-        ),
-        np.where(   # if one level is NaN
-            curr_present,  # if current level is present
-            curr[:,1], # take its volume
-            np.where(  
-                prev_present, # else if previous level is present
-                -prev[:,1], # take its negative volume
-                np.nan  # otherwise no volume for current level
-            )
-        )
-    )
-
 def compute_ofi_per_level(
         prev_bids: list[tuple[float, float]], 
         prev_asks: list[tuple[float, float]], 
@@ -78,21 +25,54 @@ def compute_ofi_per_level(
         curr_asks: list[tuple[float, float]], 
         ofi_levels: int
     ) -> list[float]:
-    """Compute OFI per order level from previous and current levels."""
-    pb = to_array(prev_bids, ofi_levels)    # Pad to fill missing levels
-    cb = to_array(curr_bids, ofi_levels)
-    pa = to_array(prev_asks, ofi_levels)
-    ca = to_array(curr_asks, ofi_levels)
+    """
+    Compute OFI per order level from previous and current levels,
+    each containing price and volume.
 
-    curr_b_present = ~np.isnan(cb).any(axis=1)  # mark non-NaN levels
-    prev_b_present = ~np.isnan(pb).any(axis=1)
-    curr_a_present = ~np.isnan(ca).any(axis=1)
-    prev_a_present = ~np.isnan(pa).any(axis=1)
-
-    bid_delta = compute_delta(cb, pb, curr_b_present, prev_b_present, lambda x, y: x > y)
-    ask_delta = compute_delta(ca, pa, curr_a_present, prev_a_present, lambda x, y: x < y)
-
-    return (bid_delta - ask_delta).tolist()
+    prev_bids: previous price-volume levels on bid side.
+    prev_asks: previous price-volume levels on ask side.
+    curr_bids: current price-volume levels on bid side.
+    curr_asks: current price-volume levels on ask side.
+    ofi_levels: number of OFI levels to compute.
+    """
+    ofi =[]
+    for i in range(ofi_levels):
+        # Bid OFI
+        if i < len(curr_bids) and i < len(prev_bids):
+            cp, cq = curr_bids[i]
+            pp, pq = prev_bids[i]
+            if cp > pp:    
+                bid_delta = cq
+            elif cp == pp: 
+                bid_delta = cq - pq
+            else:          
+                bid_delta = -pq
+        elif i < len(curr_bids):    # Previous was empty, current exists
+            bid_delta = curr_bids[i][1]
+        elif i < len(prev_bids):    # Current is empty, previous exists
+            bid_delta = -prev_bids[i][1]
+        else:
+            bid_delta = 0.0     # Both empty
+        # Ask OFI
+        if i < len(curr_asks) and i < len(prev_asks):
+            cp, cq = curr_asks[i]
+            pp, pq = prev_asks[i]
+            if cp < pp:    
+                ask_delta = cq
+            elif cp == pp: 
+                ask_delta = cq - pq
+            else:          
+                ask_delta = -pq
+        elif i < len(curr_asks):
+            ask_delta = curr_asks[i][1]
+        elif i < len(prev_asks):
+            ask_delta = -prev_asks[i][1]
+        else:
+            ask_delta = 0.0
+            
+        ofi.append(bid_delta - ask_delta)
+        
+    return ofi
 
 def compute_mid_spread(best_ask: float, best_bid: float) -> tuple[float, float]:
     """Compute mid price and spread from best_ask and best_bid."""
