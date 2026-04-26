@@ -8,7 +8,6 @@ import aiohttp
 import aiofiles
 from websockets.asyncio.client import ClientConnection
 
-BATCH_SIZE = 300_000
 subscribe_msg = {
     'method': 'SUBSCRIBE',
     'params': ['btcusdt@depth@100ms'],
@@ -76,44 +75,42 @@ async def collect_order_book():
         prev_u = None
         pending = [first_msg]
         async with aiofiles.open(stream_path, 'a') as f:
-            count = 0
-            pbar = tqdm(total=BATCH_SIZE, desc='Collecting messages', unit='msg')
+            try:
+                while True:
+                    if pending:
+                        msg = pending.pop(0)
+                    else:
+                        async with asyncio.timeout(3):
+                            msg = await msg_queue.get()
 
-            while count < BATCH_SIZE:
-                if pending:
-                    msg = pending.pop(0)
-                else:
-                    async with asyncio.timeout(3):
-                        msg = await msg_queue.get()
+                    event = json.loads(msg)
 
-                event = json.loads(msg)
-
-                if event.get('u') <= snapshot_last_id:
-                    continue
-
-                current_U = event['U']
-                current_u = event['u']
-
-                if prev_u is None:
-                    if not (current_U <= snapshot_last_id + 1 <= current_u):
-                        tqdm.write(f"Skipping non-bridging event: U={current_U}, u={current_u}, snapshot={snapshot_last_id}")
+                    if event.get('u') <= snapshot_last_id:
                         continue
-                    tqdm.write(f"Bridged, first event: U={current_U}, u={current_u}")
-                else:
-                    if current_U != prev_u + 1:
-                        tqdm.write(f"Gap detected: expected U={prev_u + 1}, got U={current_U}. Canceling...")
-                        reader_task.cancel()
-                        return 
 
-                await f.write(msg + '\n')
-                prev_u = current_u
-                count += 1
-                pbar.update(1)
-            else:
-                tqdm.write('Batch exhausted, finishing...')
+                    current_U = event['U']
+                    current_u = event['u']
 
-            reader_task.cancel()
-            pbar.close()
+                    if prev_u is None:
+                        if not (current_U <= snapshot_last_id + 1 <= current_u):
+                            tqdm.write(f"Skipping non-bridging event: U={current_U}, u={current_u}, snapshot={snapshot_last_id}")
+                            continue
+                        tqdm.write(f"Bridged, first event: U={current_U}, u={current_u}")
+                        tqdm.write('Writing stream...')
+                    else:
+                        if current_U != prev_u + 1:
+                            tqdm.write(f"Gap detected: expected U={prev_u + 1}, got U={current_U}. Canceling...")
+                            reader_task.cancel()
+                            try: 
+                                await reader_task
+                            except asyncio.CancelledError:
+                                tqdm.write('Websocket reading task cancelled.')
+                            return 
+                    
+                    await f.write(msg + '\n')
+                    prev_u = current_u
+            finally:
+                await f.flush()
 
 async def main():
     """Run the collector, resyncing on drops."""
