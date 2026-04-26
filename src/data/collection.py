@@ -50,7 +50,8 @@ async def collect_order_book():
         tqdm.write('Creating websocket reading task...')
         reader_task = asyncio.create_task(ws_reader(websocket, msg_queue))
 
-        first_msg = await msg_queue.get()
+        async with asyncio.timeout(3):
+            first_msg = await msg_queue.get()
         first_event = json.loads(first_msg)
         first_U = first_event['U']
 
