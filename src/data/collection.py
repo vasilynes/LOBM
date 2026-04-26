@@ -6,17 +6,19 @@ from datetime import datetime
 from tqdm import tqdm
 import aiohttp
 import aiofiles
+from websockets.asyncio.client import ClientConnection
 
-BATCH_SIZE = 100000
+BATCH_SIZE = 300_000
 subscribe_msg = {
     'method': 'SUBSCRIBE',
     'params': ['btcusdt@depth@100ms'],
     'id': 1
 }
 
-async def ws_reader(websocket, queue):
+async def ws_reader(websocket: ClientConnection, queue: asyncio.Queue):
+    """Read messages from websocket and put them in queue."""
     async for raw in websocket:
-        await queue.put(json.loads(raw))
+        await queue.put(raw)
 
 async def fetch_snapshot(session):
     async with session.get(
@@ -41,7 +43,8 @@ async def collect_order_book():
         msg_queue = asyncio.Queue()
         reader_task = asyncio.create_task(ws_reader(websocket, msg_queue))
 
-        first_event = await msg_queue.get()
+        first_msg = await msg_queue.get()
+        first_event = json.loads(first_msg)
         first_U = first_event['U']
 
         async with aiohttp.ClientSession() as session:
@@ -63,7 +66,7 @@ async def collect_order_book():
             pbar = tqdm(total=BATCH_SIZE, desc='Collecting messages', unit='msg')
 
             prev_u = None
-            pending = [first_event]
+            pending = [first_msg]
 
             while count < BATCH_SIZE:
                 if pending:
@@ -71,11 +74,13 @@ async def collect_order_book():
                 else:
                     msg = await msg_queue.get()
 
-                if msg.get('u') <= snapshot_last_id:
+                event = json.loads(msg)
+
+                if event.get('u') <= snapshot_last_id:
                     continue
 
-                current_U = msg['U']
-                current_u = msg['u']
+                current_U = event['U']
+                current_u = event['u']
 
                 if prev_u is None:
                     if not (current_U <= snapshot_last_id + 1 <= current_u):
@@ -88,7 +93,7 @@ async def collect_order_book():
                         reader_task.cancel()
                         raise SystemExit(1)
 
-                await f.write(json.dumps(msg) + '\n')
+                await f.write(msg + '\n')
                 prev_u = current_u
                 count += 1
                 pbar.update(1)
