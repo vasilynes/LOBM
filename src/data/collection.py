@@ -57,13 +57,14 @@ async def collect_order_book():
 
         tqdm.write('Trying to fetch snapshot...')
         async with aiohttp.ClientSession() as session:
-            while True:
-                snapshot = await fetch_snapshot(session)
-                snapshot_last_id = snapshot['lastUpdateId']
-                if snapshot_last_id >= first_U:
-                    break
-                tqdm.write(f"Snapshot too old ({snapshot_last_id} < {first_U}). Retrying in 2s...")
-                await asyncio.sleep(2) 
+            async with asyncio.timeout(30):
+                while True:
+                    snapshot = await fetch_snapshot(session)
+                    snapshot_last_id = snapshot['lastUpdateId']
+                    if snapshot_last_id >= first_U:
+                        break
+                    tqdm.write(f"Snapshot too old ({snapshot_last_id} < {first_U}). Retrying in 2s...")
+                    await asyncio.sleep(2) 
 
         tqdm.write(f"Snapshot acquired, lastUpdateId: {snapshot_last_id}")
 
@@ -82,7 +83,8 @@ async def collect_order_book():
                 if pending:
                     msg = pending.pop(0)
                 else:
-                    msg = await msg_queue.get()
+                    async with asyncio.timeout(3):
+                        msg = await msg_queue.get()
 
                 event = json.loads(msg)
 
@@ -122,8 +124,11 @@ async def main():
         except websockets.exceptions.ConnectionClosed as e:
             tqdm.write(f"Websocket closed, ({e}). Retrying in 1s...")
             await asyncio.sleep(1)
-        except (ConnectionError, asyncio.TimeoutError) as e:
-            tqdm.write(f"Network connection lost ({e.__class__.__name__}). Retrying in 3s...")
+        except TimeoutError:
+            tqdm.write('Timed out. Retrying in 1s...')
+            await asyncio.sleep(1)
+        except ConnectionError as e:
+            tqdm.write(f"Network connection lost ({type(e).__name__}). Retrying in 3s...")
             await asyncio.sleep(3)
         except Exception as e:
             tqdm.write(f"Unexpected error: {type(e).__name__}: {e}. Retrying in 5s...")
