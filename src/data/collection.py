@@ -3,7 +3,6 @@ import websockets
 import json
 from pathlib import Path
 from datetime import datetime
-from tqdm import tqdm
 import aiohttp
 import aiofiles
 from websockets.asyncio.client import ClientConnection
@@ -31,23 +30,23 @@ async def collect_order_book():
     base_dir.mkdir(parents=True, exist_ok=True)
 
     run_id = datetime.now().strftime('%H%M%S')
-    tqdm.write(f"New run_id: {run_id}.")
+    print(f"New run_id: {run_id}.")
 
     snapshot_path = base_dir / f"snapshot_{run_id}.json"
     stream_path = base_dir / f"stream_{run_id}.jsonl"
 
     uri = "wss://stream.binance.com:9443/ws"
 
-    tqdm.write('Connecting websocket...')
+    print('Connecting websocket...')
     async with websockets.connect(uri) as websocket:
         # Subscribe
         await websocket.send(json.dumps(subscribe_msg))
         response = await websocket.recv()
-        tqdm.write(f"Subscription response: {response}")
+        print(f"Subscription response: {response}")
 
-        tqdm.write('Initializing queue...')
+        print('Initializing queue...')
         msg_queue = asyncio.Queue()
-        tqdm.write('Creating websocket reading task...')
+        print('Creating websocket reading task...')
         reader_task = asyncio.create_task(ws_reader(websocket, msg_queue))
 
         async with asyncio.timeout(3):
@@ -55,7 +54,7 @@ async def collect_order_book():
         first_event = json.loads(first_msg)
         first_U = first_event['U']
 
-        tqdm.write('Trying to fetch snapshot...')
+        print('Trying to fetch snapshot...')
         async with aiohttp.ClientSession() as session:
             async with asyncio.timeout(30):
                 while True:
@@ -63,16 +62,16 @@ async def collect_order_book():
                     snapshot_last_id = snapshot['lastUpdateId']
                     if snapshot_last_id >= first_U:
                         break
-                    tqdm.write(f"Snapshot too old ({snapshot_last_id} < {first_U}). Retrying in 2s...")
+                    print(f"Snapshot too old ({snapshot_last_id} < {first_U}). Retrying in 2s...")
                     await asyncio.sleep(2) 
 
-        tqdm.write(f"Snapshot acquired, lastUpdateId: {snapshot_last_id}")
+        print(f"Snapshot acquired, lastUpdateId: {snapshot_last_id}")
 
         with open(snapshot_path, 'w') as f:
             json.dump(snapshot, f)
-        tqdm.write('Snapshot saved.')
+        print('Snapshot saved.')
 
-        tqdm.write('Bridging stream...')
+        print('Bridging stream...')
         prev_u = None
         pending = [first_msg]
         async with aiofiles.open(stream_path, 'a') as f:
@@ -94,18 +93,18 @@ async def collect_order_book():
 
                     if prev_u is None:
                         if not (current_U <= snapshot_last_id + 1 <= current_u):
-                            tqdm.write(f"Skipping non-bridging event: U={current_U}, u={current_u}, snapshot={snapshot_last_id}")
+                            print(f"Skipping non-bridging event: U={current_U}, u={current_u}, snapshot={snapshot_last_id}")
                             continue
-                        tqdm.write(f"Bridged, first event: U={current_U}, u={current_u}")
-                        tqdm.write('Writing stream...')
+                        print(f"Bridged, first event: U={current_U}, u={current_u}")
+                        print('Writing stream...')
                     else:
                         if current_U != prev_u + 1:
-                            tqdm.write(f"Gap detected: expected U={prev_u + 1}, got U={current_U}. Canceling...")
+                            print(f"Gap detected: expected U={prev_u + 1}, got U={current_U}. Canceling...")
                             reader_task.cancel()
                             try: 
                                 await reader_task
                             except asyncio.CancelledError:
-                                tqdm.write('Websocket reading task cancelled.')
+                                print('Websocket reading task cancelled.')
                             return 
                     
                     await f.write(msg + '\n')
@@ -117,19 +116,19 @@ async def main():
     """Run the collector, resyncing on drops."""
     while True:
         try:
-            tqdm.write(f"\nStarting collection at {datetime.now()}")
+            print(f"\nStarting collection at {datetime.now()}")
             await collect_order_book()
         except websockets.exceptions.ConnectionClosed as e:
-            tqdm.write(f"Websocket closed, ({e}). Retrying in 1s...")
+            print(f"Websocket closed, ({e}). Retrying in 1s...")
             await asyncio.sleep(1)
         except TimeoutError:
-            tqdm.write('Timed out. Retrying in 1s...')
+            print('Timed out. Retrying in 1s...')
             await asyncio.sleep(1)
         except ConnectionError as e:
-            tqdm.write(f"Network connection lost ({type(e).__name__}). Retrying in 3s...")
+            print(f"Network connection lost ({type(e).__name__}). Retrying in 3s...")
             await asyncio.sleep(3)
         except Exception as e:
-            tqdm.write(f"Unexpected error: {type(e).__name__}: {e}. Retrying in 5s...")
+            print(f"Unexpected error: {type(e).__name__}: {e}. Retrying in 5s...")
             await asyncio.sleep(5)
 
 
@@ -137,4 +136,4 @@ if __name__ == '__main__':
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        tqdm.write("\nStopped by user")
+        print("\nStopped by user")
