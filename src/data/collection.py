@@ -28,9 +28,12 @@ async def fetch_snapshot(session):
 
 async def collect_order_book():
     today = datetime.now().strftime('%Y-%m-%d')
-    data_path = Path(f"data/raw/{today}/stream.jsonl")
-    data_path.parent.mkdir(parents=True, exist_ok=True)
-    snapshot_path = Path(f"data/raw/{today}/snapshot.json")
+    base_dir = Path(f"data/raw/{today}")
+    base_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    run_id = datetime.now().strftime('%H%M%S')
+    snapshot_path = base_dir / f"snapshot_{run_id}.json"
+    stream_path = base_dir / f"stream_{run_id}.jsonl"
 
     uri = "wss://stream.binance.com:9443/ws"
 
@@ -61,7 +64,7 @@ async def collect_order_book():
         with open(snapshot_path, 'w') as f:
             json.dump(snapshot, f)
 
-        async with aiofiles.open(data_path, 'a') as f:
+        async with aiofiles.open(stream_path, 'a') as f:
             count = 0
             pbar = tqdm(total=BATCH_SIZE, desc='Collecting messages', unit='msg')
 
@@ -91,7 +94,7 @@ async def collect_order_book():
                     if current_U != prev_u + 1:
                         tqdm.write(f"Gap detected: expected U={prev_u + 1}, got U={current_U}. Re-synchronizing...")
                         reader_task.cancel()
-                        raise SystemExit(1)
+                        return 
 
                 await f.write(msg + '\n')
                 prev_u = current_u
@@ -103,8 +106,25 @@ async def collect_order_book():
             reader_task.cancel()
             pbar.close()
 
+async def main():
+    """Run the collector, resyncing on drops."""
+    while True:
+        try:
+            tqdm.write(f"\nStarting collection at {datetime.now()}")
+            await collect_order_book()
+        except websockets.exceptions.ConnectionClosed as e:
+            tqdm.write(f"Websocket closed, ({e}). Resyncing...")
+            await asyncio.sleep(1)
+        except (ConnectionError, asyncio.TimeoutError) as e:
+            tqdm.write(f"Network connection lost ({e.__class__.__name__}). Retrying...")
+            await asyncio.sleep(3)
+        except Exception as e:
+            tqdm.write(f"Unexpected error: {type(e).__name__}: {e}. Retrying...")
+            await asyncio.sleep(5)
+
+
 if __name__ == '__main__':
     try:
-        asyncio.run(collect_order_book())
+        asyncio.run(main())
     except KeyboardInterrupt:
         tqdm.write("\nStopped by user")
