@@ -29,11 +29,11 @@ async def fetch_snapshot(session):
 async def collect_order_book():
     today = datetime.now().strftime('%Y-%m-%d')
     base_dir = Path(f"data/raw/{today}")
-    base_dir.parent.mkdir(parents=True, exist_ok=True)
+    base_dir.mkdir(parents=True, exist_ok=True)
 
     run_id = datetime.now().strftime('%H%M%S')
     tqdm.write(f"New run_id: {run_id}.")
-    
+
     snapshot_path = base_dir / f"snapshot_{run_id}.json"
     stream_path = base_dir / f"stream_{run_id}.jsonl"
 
