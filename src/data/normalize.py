@@ -1,9 +1,10 @@
 import polars as pl
 from pathlib import Path
 from datetime import datetime
-from typing import Iterator, Iterable
+from typing import Iterable
 import pyarrow.parquet as pq
 import argparse 
+import helpers
 
 WINDOW = 10_000
 BATCH_SIZE = 300_000
@@ -58,12 +59,6 @@ def rolling_zscore(lf: pl.LazyFrame, cols: list, window_size: int) -> pl.LazyFra
         )
 
     return lf.with_columns(zscore_exprs)
-
-def iter_batches(file_path: Path, batch_size: int) -> Iterator[pl.DataFrame]:
-    """Yield batches from parquet file."""
-    f = pq.ParquetFile(file_path)
-    for batch in f.iter_batches(batch_size=batch_size):
-        yield pl.from_arrow(batch)
 
 def normalize(
         batches: Iterable[pl.DataFrame], 
@@ -131,5 +126,5 @@ if __name__ == '__main__':
     args = parse_args()
     input_file = Path(f"data/books/{args.date}/lob20.parquet")
     output_file = Path(f"data/normalized/{args.date}/lob20.parquet")
-    batches = iter_batches(input_file, BATCH_SIZE)
+    batches = helpers.iter_batches(input_file, BATCH_SIZE)
     normalize(batches, output_file, WINDOW, NORM_COLS)
