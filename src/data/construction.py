@@ -2,15 +2,15 @@ from sortedcontainers import SortedDict
 import json
 import polars as pl
 from pathlib import Path
-from itertools import islice
+from itertools import islice, batched
 import numpy as np
 import argparse
-from typing import Iterator, Callable
-from numpy.typing import NDArray
+from typing import Iterator, Iterable
+import pyarrow.parquet as pq
 
 LEVELS = 20
 OFI_LEVELS = 10
-BATCH_SIZE = 300000
+BATCH_SIZE = 300_000
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Script for constructing data from snapshot and stream')
@@ -270,7 +270,7 @@ def build_lob(
 
     for event, top_bids, top_asks in events:
         yield make_row(
-            event['E'],
+            event['E'], # event timestamp
             top_bids, 
             top_asks, 
             prev_bids,
@@ -281,23 +281,25 @@ def build_lob(
         prev_bids = top_bids[:ofi_levels]
         prev_asks = top_asks[:ofi_levels]
 
-def write_parquet(batch, cols, file_idx, output_dir):
-    schema = {'timestamp': pl.Int64}
-    schema.update({c: pl.Float64 for c in cols if c != 'timestamp'})
+def batch_to_arrow(
+        batch: list[list[float]], 
+        schema: dict, 
+    ) -> pq.Table:
+    """Convert the batch to Pyarrow Table with the schema."""
     df = pl.DataFrame(batch, schema=schema, orient='row')
+
     df = df.with_columns(
         pl.when(pl.col(pl.Float64).is_nan())
         .then(None)
         .otherwise(pl.col(pl.Float64))
-        .name.keep()
+        .name
+        .keep()
     )
-    output_path = output_dir / f"lob20_{file_idx:05d}.parquet"
-    df.write_parquet(output_path, compression='zstd')
-    print(f"Written batch {file_idx}, {len(batch)} rows -> {output_path}")
+    return df.to_arrow()
 
 def save_parquet(
-        row_generator: Iterator[list[float]], 
-        output_dir: Path, 
+        rows: Iterable[list[float]], 
+        output_file: Path, 
         levels: int = LEVELS, 
         ofi_levels: int = OFI_LEVELS, 
         batch_size: int = BATCH_SIZE
@@ -307,15 +309,13 @@ def save_parquet(
     (event_timestamp, bid_price_1, ..., bid_price_N, ask_price_1, ..., ask_price_N, ofi_1, ..., ofi_M, mid, spread),
     where N and M are equal to levels and ofi_levels, to parquet files in batches.
 
-    row_generator: generator for rows to be written in the file.
-    output_dir: directory to store parquet files.
-    levels: number of order levels row_generator outputs.
-    ofi_levels: number of OFI levels row_generator outputs.
+    rows: iterable for rows to be written in the file.
+    output_file: path to the output parquet file.
+    levels: number of order levels rows iterable contains.
+    ofi_levels: number of OFI levels rows iterable contains.
     batch_size: number of rows per parquet file.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
-    batch = []
-    file_idx = 0
+    output_file.parent.mkdir(parents=True, exist_ok=True)
 
     # Cluster features for better compression
     cols = ['timestamp']
@@ -326,22 +326,32 @@ def save_parquet(
     cols.extend(f"ofi_{i}" for i in range(ofi_levels))
     cols.extend(['mid', 'spread'])
 
-    for row in row_generator:
-        batch.append(row)
-        if len(batch) >= batch_size:
-            write_parquet(batch, cols, file_idx, output_dir)
-            batch = []
-            file_idx += 1
+    schema = {'timestamp': pl.Int64}
+    schema.update({c: pl.Float64 for c in cols if c != 'timestamp'})
 
-    if batch:
-        write_parquet(batch, cols, file_idx, output_dir)
+    writer = None
+    try:
+        print(f"Starting to write {output_file}...")
+        for i, batch in enumerate(batched(rows, batch_size), start=1):
+            arrow_table = batch_to_arrow(batch, schema)
+            if writer is None:
+                writer = pq.ParquetWriter(output_file, arrow_table.schema, compression='zstd')
+            writer.write_table(arrow_table)
+            print(f"Wrote chunk {i} ({len(batch)} rows) -> {output_file.name}")
+    finally:          
+        if writer is not None:
+            writer.close()
+            print(f"Finished writing {output_file}.")
+        else:
+            print('Nothing was written.')
+        
 
 if __name__ == '__main__':
     args = parse_args()
     stream_path = Path(f"data/raw/{args.date}/stream.jsonl")
     snapshot_path = Path(f"data/raw/{args.date}/snapshot.json")
-    output_dir = Path(f"data/books/{args.date}")
+    output_file = Path(f"data/books/{args.date}/lob20.parquet")
 
     rows = build_lob(snapshot_path, stream_path)
-    save_parquet(rows, output_dir)
+    save_parquet(rows, output_file)
 
