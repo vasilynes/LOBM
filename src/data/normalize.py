@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Iterable
 import pyarrow.parquet as pq
 import argparse 
-import helpers
+from . import helpers
 
 WINDOW = 10_000
 BATCH_SIZE = 300_000
@@ -20,7 +20,8 @@ NORM_COLS = PRICE_COLS + QTY_COLS + OFI_COLS + STAT_COLS
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Script for normalizing limit order data')
-    parser.add_argument('--date', '-d', required=True, help='Date used to find the LOB folder')
+    parser.add_argument('--date', '-d', required=True, help='Date of the LOB folder')
+    parser.add_argument('--time', '-t', required=True, help='Time of the LOB data')
 
     return parser.parse_args()
 
@@ -124,7 +125,7 @@ def normalize(
 if __name__ == '__main__':
     today = datetime.now().strftime('%Y-%m-%d')
     args = parse_args()
-    input_file = Path(f"data/books/{args.date}/lob20.parquet")
-    output_file = Path(f"data/normalized/{args.date}/lob20.parquet")
+    input_file = Path(f"data/books/{args.date}/lob20_{args.time}.parquet")
+    output_file = Path(f"data/normalized/{args.date}/lob20_{args.time}.parquet")
     batches = helpers.iter_batches(input_file, BATCH_SIZE)
     normalize(batches, output_file, WINDOW, NORM_COLS)
