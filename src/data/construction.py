@@ -14,7 +14,8 @@ BATCH_SIZE = 300_000
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Script for constructing data from snapshot and stream')
-    parser.add_argument('--date', '-d', required=True, help='Date used to find the snapshot and stream records')
+    parser.add_argument('--date', '-d', required=True, help='Date of the snapshot and stream folder')
+    parser.add_argument('--time', '-t', required=True, help='Time of the snapshot file')
 
     return parser.parse_args()
 
@@ -348,9 +349,9 @@ def save_parquet(
 
 if __name__ == '__main__':
     args = parse_args()
-    stream_path = Path(f"data/raw/{args.date}/stream.jsonl")
-    snapshot_path = Path(f"data/raw/{args.date}/snapshot.json")
-    output_file = Path(f"data/books/{args.date}/lob20.parquet")
+    stream_path = Path(f"data/raw/{args.date}/stream_{args.time}.jsonl")
+    snapshot_path = Path(f"data/raw/{args.date}/snapshot_{args.time}.json")
+    output_file = Path(f"data/books/{args.date}/lob20_{args.time}.parquet")
 
     rows = build_lob(snapshot_path, stream_path)
     save_parquet(rows, output_file)
