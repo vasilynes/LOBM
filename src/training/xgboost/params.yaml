@@ -1,0 +1,11 @@
+objective: reg:absoluteerror
+n_estimators: 200
+learning_rate: 0.01        
+max_depth: 3              
+min_child_weight: 500      
+subsample: 0.8             
+colsample_bytree: 0.8      
+reg_lambda: 2.0           
+tree_method: hist
+eval_metric: [mae, rmse]
+early_stopping_rounds: 20
