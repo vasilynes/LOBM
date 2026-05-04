@@ -1,0 +1,96 @@
+import torch 
+import torch.nn as nn
+
+class LOB_NN(nn.Module):
+    """
+        Processes a tensor of dim (Batch, Channels, Time, Levels), 
+        where Channels are configured to be AskP, AskQ, BidP, BidQ, 
+        Time is configured to be 100, Levels are 20 LOB levels.
+
+        In forward, the tensor is passed through multiple convolutions,
+        resulting in four tensors of dim (Batch, 64, Time, 1).
+        To preserve the Time dimension magnitude as is (100), 
+        tensors are causally padded at the beginning of the sequence.
+        The results are concatenated along the second dimension
+        and squeezed with permutation to a tensor (Batch, Time, 256).
+
+        The output is fed to the 1-Layer (64) GRU network, whose  
+        hidded states are then passed through temporal pooling Linear 
+        layer (64 -> 1) and softmaxed to obtain weights for a linear 
+        combination of GRU hidden states, which is then passed through 
+        Linear layers (64 -> 32 -> output_dim), where output_dim 
+        defaults to 1. The resulting tensor is of dim (Batch, output_dim).
+    """
+    def __init__(self, output_dim=1):
+        super(LOB_NN, self).__init__()
+
+        # Calculate microstructure features for each Level
+        self.conv_micro = nn.Sequential(
+            nn.Conv2d(in_channels=4, out_channels=16, kernel_size=(1, 1)),
+            nn.LeakyReLU(negative_slope=0.01),
+            nn.BatchNorm2d(16)
+        )
+        
+        # Calculate macrostructure features along all Levels
+        self.conv_macro = nn.Sequential(
+            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=(1, 20)),
+            nn.LeakyReLU(negative_slope=0.01),
+            nn.BatchNorm2d(32)
+        )
+        
+        # Convolve along Time dimension with kernels of different sizes
+        self.inp1 = nn.Sequential(
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(1, 1), padding=(0, 0)),
+            nn.LeakyReLU(negative_slope=0.01),
+            nn.BatchNorm2d(64)
+        )
+        self.inp2 = nn.Sequential(
+            nn.ZeroPad2d((0, 0, 2, 0)),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(3, 1)),
+            nn.LeakyReLU(negative_slope=0.01),
+            nn.BatchNorm2d(64)
+        )
+        self.inp3 = nn.Sequential(
+            nn.ZeroPad2d((0, 0, 4, 0)),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(5, 1)),
+            nn.LeakyReLU(negative_slope=0.01),
+            nn.BatchNorm2d(64)
+        )
+        # Max pool features and convolve 32 -> 64 for dimension compatibility
+        self.inp_pool = nn.Sequential(
+            nn.ZeroPad2d((0, 0, 2, 0)), 
+            nn.MaxPool2d(kernel_size=(3, 1), stride=(1, 1)),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(1, 1)),
+            nn.LeakyReLU(0.01),
+            nn.BatchNorm2d(64)
+        )
+
+        self.gru = nn.GRU(input_size=256, hidden_size=64, num_layers=1, batch_first=True)
+
+        self.attn = nn.Linear(64, 1)
+
+        self.fc = nn.Sequential(
+            nn.Dropout(p=0.2),
+            nn.Linear(64, 32), 
+            nn.LeakyReLU(negative_slope=0.01),
+            nn.Dropout(p=0.1),
+            nn.Linear(32, output_dim)
+        )
+
+    def forward(self, x):
+        x = self.conv_micro(x)
+        x = self.conv_macro(x)
+        x_inp1 = self.inp1(x)
+        x_inp2 = self.inp2(x)
+        x_inp3 = self.inp3(x)
+        x_pool = self.inp_pool(x)
+        x_cat = torch.cat([x_inp1, x_inp2, x_inp3, x_pool], dim=1)
+        x = x_cat.squeeze(-1).permute(0, 2, 1)
+
+        h, _ = self.gru(x)
+        attn = torch.softmax(self.attn(h), dim=1)
+        h_comb = (attn * h).sum(dim=1)
+        pred = self.fc(h_comb)
+
+        return pred
+    
