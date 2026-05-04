@@ -83,7 +83,7 @@ class LOBDataset(IterableDataset):
         for chunk in self.pf.iter_batches(batch_size=self.chunk_size):
             df = pl.from_arrow(chunk)
 
-            # Result dim: (Time, Levels)
+            # Result dim: (Time, Channels * Levels)
             lob_np = df.select(LOB_COLS).to_numpy().astype(np.float32)
 
             # Result dim: (Time, Levels, Channels)
@@ -120,13 +120,13 @@ class LOBDataset(IterableDataset):
             # This is proper for CNN-GRU logic
             lob_windows = np.transpose(lob_windows, (0, 2, 3, 1))
             
-            # Result dim: (Batch, Levels, Time)
+            # Result dim: (Batch, OFI_LEVELS + 2, Time)
             global_windows = sliding_window_view(
                 global_np[:valid_n + self.seq_len - 1],
                 window_shape=self.seq_len,
                 axis=0
             )
-            # Result dim: (Batch, Time, Levels)
+            # Result dim: (Batch, Time, OFI_LEVELS + 2)
             # This is proper for CNN-GRU logic
             global_windows = np.transpose(global_windows, (0, 2, 1))
 
