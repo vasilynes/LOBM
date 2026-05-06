@@ -70,6 +70,8 @@ class LOBDataset(IterableDataset):
 
         self.req_len = self.seq_len + self.horizon
         self.shard_files = sorted(self.split_dir.glob('*.parquet'))
+        self.global_cols_mask = list(range(len(GLOBAL_COLS))) 
+        self.global_cols_mask.pop(MID_PRICE_INDEX)  # Exclude mid price
 
     @staticmethod
     def _stack_lob(lob_np):
@@ -146,13 +148,18 @@ class LOBDataset(IterableDataset):
                     axis=0
                 )
                 # Result dim: (Batch, Time, OFI_LEVELS + 2)
-                # This is proper for CNN-GRU logic
                 global_windows = np.transpose(global_windows, (0, 2, 1))
 
                 for i in range(0, valid_n, self.nn_batch_size):
                     end_i = min(i + self.nn_batch_size, valid_n)
                     batch_lob =  torch.from_numpy(np.ascontiguousarray(lob_windows[i : end_i]))
-                    batch_global = torch.from_numpy(np.ascontiguousarray(global_windows[i : end_i]))
+                    batch_global = torch.from_numpy(
+                        np.ascontiguousarray(
+                            # Result dim: (Batch, Time, OFI_LEVELS + 1)
+                            # This is proper for CNN-GRU logic
+                            global_windows[i : end_i, :, self.global_cols_mask]
+                        )
+                    )
                     batch_target = torch.from_numpy(target_bps[i : end_i]).unsqueeze(-1)
                     yield batch_lob, batch_global, batch_target
                 
