@@ -11,11 +11,6 @@ from functools import cached_property
 
 LEVELS = 20
 OFI_LEVELS = 10
-SEQ_LEN = 100
-HORIZON = 100
-CHUNK_SIZE = 300_000
-NN_BATCH_SIZE = 1024
-MID_PRICE_INDEX = -2
 
 LOB_COLS = (
     [f"bid_p{i}" for i in range(LEVELS)] +
@@ -24,6 +19,13 @@ LOB_COLS = (
     [f"ask_q{i}" for i in range(LEVELS)]
 )
 GLOBAL_COLS = [f"ofi_{i}" for i in range(OFI_LEVELS)] + ['mid', 'spread']
+
+SEQ_LEN = 100
+HORIZON = 100
+CHUNK_SIZE = 300_000
+NN_BATCH_SIZE = 1024
+MID_PRICE_INDEX = GLOBAL_COLS.index('mid')
+
 
 class LOBDataset(IterableDataset):
     """
@@ -70,6 +72,7 @@ class LOBDataset(IterableDataset):
 
         self.req_len = self.seq_len + self.horizon
         self.shard_files = sorted(self.split_dir.glob('*.parquet'))
+        print(self.shard_files)
         self.global_cols_mask = list(range(len(GLOBAL_COLS))) 
         self.global_cols_mask.pop(MID_PRICE_INDEX)  # Exclude mid price
 
@@ -96,6 +99,7 @@ class LOBDataset(IterableDataset):
             return self.shard_files[start_idx : end_idx]
 
     def __iter__(self):
+        print(self._worker_files)
         for file_path in self._worker_files:
             self.pf = pq.ParquetFile(file_path)
             overlap_lob = None
