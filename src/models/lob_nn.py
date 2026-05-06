@@ -30,33 +30,28 @@ class LOB_NN(nn.Module):
         self.conv_micro = nn.Sequential(
             nn.Conv2d(in_channels=4, out_channels=16, kernel_size=(1, 1)),
             nn.LeakyReLU(negative_slope=0.01),
-            nn.BatchNorm2d(16)
         )
         
         # Calculate macrostructure features along all Levels
         self.conv_macro = nn.Sequential(
             nn.Conv2d(in_channels=16, out_channels=32, kernel_size=(1, 20)),
             nn.LeakyReLU(negative_slope=0.01),
-            nn.BatchNorm2d(32)
         )
         
         # Convolve along Time dimension with kernels of different sizes
         self.inp1 = nn.Sequential(
             nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(1, 1), padding=(0, 0)),
             nn.LeakyReLU(negative_slope=0.01),
-            nn.BatchNorm2d(64)
         )
         self.inp2 = nn.Sequential(
             nn.ZeroPad2d((0, 0, 2, 0)),
             nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(3, 1)),
             nn.LeakyReLU(negative_slope=0.01),
-            nn.BatchNorm2d(64)
         )
         self.inp3 = nn.Sequential(
             nn.ZeroPad2d((0, 0, 4, 0)),
             nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(5, 1)),
             nn.LeakyReLU(negative_slope=0.01),
-            nn.BatchNorm2d(64)
         )
         # Max pool features and convolve 32 -> 64 for dimension compatibility
         self.inp_pool = nn.Sequential(
@@ -64,7 +59,6 @@ class LOB_NN(nn.Module):
             nn.MaxPool2d(kernel_size=(3, 1), stride=(1, 1)),
             nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(1, 1)),
             nn.LeakyReLU(0.01),
-            nn.BatchNorm2d(64)
         )
 
         self.gru = nn.GRU(
@@ -73,6 +67,8 @@ class LOB_NN(nn.Module):
             num_layers=1, 
             batch_first=True
         )
+
+        self.ln = nn.LayerNorm(64)
 
         self.attn = nn.Linear(64, 1)
 
@@ -100,8 +96,9 @@ class LOB_NN(nn.Module):
         x = torch.cat([cnn_out, x_global], dim=-1)
 
         h, _ = self.gru(x)
-        attn = torch.softmax(self.attn(h), dim=1)
-        h_comb = (attn * h).sum(dim=1)
+        h_norm = self.ln(h)
+        attn = torch.softmax(self.attn(h_norm), dim=1)
+        h_comb = (attn * h).sum(dim=1) 
         pred = self.fc(h_comb)
 
         return pred
