@@ -69,7 +69,7 @@ class TrainingNN:
                     n_samples_val += batch_size_val
                 val_loss /= n_samples_val
 
-            print(f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
+            print(f"Epoch {epoch+1}/{self.epochs} - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
