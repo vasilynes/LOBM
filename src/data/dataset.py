@@ -26,7 +26,6 @@ CHUNK_SIZE = 300_000
 NN_BATCH_SIZE = 1024
 MID_PRICE_INDEX = GLOBAL_COLS.index('mid')
 
-
 class LOBDataset(IterableDataset):
     """
         Iterates through a parquet file in chunks of size chunk_size
@@ -170,8 +169,8 @@ class LOBDataset(IterableDataset):
                 overlap_lob = lob_stack[-(self.req_len - 1):].copy()    # Do not store an entire prev chunk in memory
                 overlap_global = global_np[-(self.req_len - 1):].copy() # only copy the overlap
 
-def get_dataset(date: str, type: str) -> LOBDataset | None:
-    match type:
+def get_dataset(date: str, dataset_type: str) -> LOBDataset | None:
+    match dataset_type:
         case 'train':
             return LOBDataset(
                 Path(f"data/splits/{date}/train"),
