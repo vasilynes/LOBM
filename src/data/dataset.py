@@ -5,6 +5,9 @@ import numpy as np
 from pathlib import Path
 import pyarrow.parquet as pq
 from numpy.lib.stride_tricks import sliding_window_view
+from torch.utils.data import get_worker_info
+import math
+from functools import cached_property
 
 LEVELS = 20
 OFI_LEVELS = 10
@@ -29,8 +32,7 @@ class LOBDataset(IterableDataset):
         a neural network. 
 
         Crucially: this IterableDataset collates batches manually,
-        the wrapping DataLoader must be called with batch_size=None 
-        and num_workers=0 (TODO: solve the latter).
+        the wrapping DataLoader must be called with batch_size=None.
 
         The logic of chunk processing: 
             - Create a polars df from the chunk,
@@ -54,20 +56,20 @@ class LOBDataset(IterableDataset):
 
     def __init__(
             self, 
-            file_path, 
+            split_dir: Path, 
             seq_len=SEQ_LEN, 
             horizon=HORIZON, 
             chunk_size=CHUNK_SIZE,
             nn_batch_size=NN_BATCH_SIZE
         ):
-        self.file_path = file_path
+        self.split_dir = split_dir
         self.seq_len = seq_len
         self.horizon = horizon
         self.chunk_size = chunk_size
-        self.nn_batch_size = nn_batch_size
+        self.nn_batch_size = nn_batch_size  
 
-        self.pf = pq.ParquetFile(self.file_path)
         self.req_len = self.seq_len + self.horizon
+        self.shard_files = sorted(self.split_dir.glob('*.parquet'))
 
     @staticmethod
     def _stack_lob(lob_np):
@@ -76,83 +78,100 @@ class LOBDataset(IterableDataset):
         ask_p = lob_np[:, 2*LEVELS : 3*LEVELS]
         ask_q = lob_np[:, 3*LEVELS : 4*LEVELS]
         return np.stack([ask_p, ask_q, bid_p, bid_q], axis=-1)
+    
+    @cached_property
+    def _worker_files(self):
+        worker_info = get_worker_info()
+        if worker_info is None:
+            return self.shard_files
+        else:
+            per_worker = int(math.ceil(
+                len(self.shard_files) / float(worker_info.num_workers)
+            ))
+            worker_id = worker_info.id
+            start_idx = worker_id * per_worker
+            end_idx = min(start_idx + per_worker, len(self.shard_files))
+            return self.shard_files[start_idx : end_idx]
 
     def __iter__(self):
-        overlap_lob = None
-        overlap_global = None
-        for chunk in self.pf.iter_batches(batch_size=self.chunk_size):
-            df = pl.from_arrow(chunk)
+        for file_path in self._worker_files:
+            self.pf = pq.ParquetFile(file_path)
+            overlap_lob = None
+            overlap_global = None
 
-            # Result dim: (Time, Channels * Levels)
-            lob_np = df.select(LOB_COLS).to_numpy().astype(np.float32)
+            for chunk in self.pf.iter_batches(batch_size=self.chunk_size):
+                df = pl.from_arrow(chunk)
 
-            # Result dim: (Time, Levels, Channels)
-            lob_stack = self._stack_lob(lob_np)
+                # Result dim: (Time, Channels * Levels)
+                lob_np = df.select(LOB_COLS).to_numpy().astype(np.float32)
 
-            # Result dim: (Time, Levels)
-            global_np = df.select(GLOBAL_COLS).to_numpy().astype(np.float32)
-            
-            if overlap_lob is not None:
-                lob_stack = np.concatenate([overlap_lob, lob_stack], axis=0)
-                global_np = np.concatenate([overlap_global, global_np], axis=0)
-            
-            n_rows = len(lob_stack)
-            if n_rows < self.req_len:
-                overlap_lob = lob_stack
-                overlap_global = global_np
-                continue 
-            
-            valid_n = n_rows - self.req_len + 1
+                # Result dim: (Time, Levels, Channels)
+                lob_stack = self._stack_lob(lob_np)
 
-            mid_now_idx = np.arange(self.seq_len - 1, self.seq_len - 1 + valid_n)
-            mid_future_idx = mid_now_idx + self.horizon
-            mid_now = global_np[mid_now_idx, MID_PRICE_INDEX]
-            mid_future = global_np[mid_future_idx, MID_PRICE_INDEX]
-            target_bps = ((mid_future - mid_now) / (mid_now + 1e-8)) * 10_000
+                # Result dim: (Time, Levels)
+                global_np = df.select(GLOBAL_COLS).to_numpy().astype(np.float32)
+                
+                if overlap_lob is not None:
+                    lob_stack = np.concatenate([overlap_lob, lob_stack], axis=0)
+                    global_np = np.concatenate([overlap_global, global_np], axis=0)
+                
+                n_rows = len(lob_stack)
+                if n_rows < self.req_len:
+                    overlap_lob = lob_stack
+                    overlap_global = global_np
+                    continue 
+                
+                valid_n = n_rows - self.req_len + 1
 
-            # Result dim: (Batch, Levels, Channels, Time)
-            lob_windows = sliding_window_view(
-                lob_stack[:valid_n + self.seq_len - 1],
-                window_shape=self.seq_len,
-                axis=0
-            )
-            # Result dim: (Batch, Channels, Time, Levels)
-            # This is proper for CNN-GRU logic
-            lob_windows = np.transpose(lob_windows, (0, 2, 3, 1))
-            
-            # Result dim: (Batch, OFI_LEVELS + 2, Time)
-            global_windows = sliding_window_view(
-                global_np[:valid_n + self.seq_len - 1],
-                window_shape=self.seq_len,
-                axis=0
-            )
-            # Result dim: (Batch, Time, OFI_LEVELS + 2)
-            # This is proper for CNN-GRU logic
-            global_windows = np.transpose(global_windows, (0, 2, 1))
+                mid_now_idx = np.arange(self.seq_len - 1, self.seq_len - 1 + valid_n)
+                mid_future_idx = mid_now_idx + self.horizon
+                mid_now = global_np[mid_now_idx, MID_PRICE_INDEX]
+                mid_future = global_np[mid_future_idx, MID_PRICE_INDEX]
+                target_bps = ((mid_future - mid_now) / (mid_now + 1e-8)) * 10_000
 
-            for i in range(0, valid_n, self.nn_batch_size):
-                end_i = min(i + self.nn_batch_size, valid_n)
-                batch_lob =  torch.from_numpy(np.ascontiguousarray(lob_windows[i : end_i]))
-                batch_global = torch.from_numpy(np.ascontiguousarray(global_windows[i : end_i]))
-                batch_target = torch.from_numpy(target_bps[i : end_i]).unsqueeze(-1)
-                yield batch_lob, batch_global, batch_target
-            
-            overlap_lob = lob_stack[-(self.req_len - 1):].copy()    # Do not store an entire prev chunk in memory
-            overlap_global = global_np[-(self.req_len - 1):].copy() # only copy the overlap
+                # Result dim: (Batch, Levels, Channels, Time)
+                lob_windows = sliding_window_view(
+                    lob_stack[:valid_n + self.seq_len - 1],
+                    window_shape=self.seq_len,
+                    axis=0
+                )
+                # Result dim: (Batch, Channels, Time, Levels)
+                # This is proper for CNN-GRU logic
+                lob_windows = np.transpose(lob_windows, (0, 2, 3, 1))
+                
+                # Result dim: (Batch, OFI_LEVELS + 2, Time)
+                global_windows = sliding_window_view(
+                    global_np[:valid_n + self.seq_len - 1],
+                    window_shape=self.seq_len,
+                    axis=0
+                )
+                # Result dim: (Batch, Time, OFI_LEVELS + 2)
+                # This is proper for CNN-GRU logic
+                global_windows = np.transpose(global_windows, (0, 2, 1))
+
+                for i in range(0, valid_n, self.nn_batch_size):
+                    end_i = min(i + self.nn_batch_size, valid_n)
+                    batch_lob =  torch.from_numpy(np.ascontiguousarray(lob_windows[i : end_i]))
+                    batch_global = torch.from_numpy(np.ascontiguousarray(global_windows[i : end_i]))
+                    batch_target = torch.from_numpy(target_bps[i : end_i]).unsqueeze(-1)
+                    yield batch_lob, batch_global, batch_target
+                
+                overlap_lob = lob_stack[-(self.req_len - 1):].copy()    # Do not store an entire prev chunk in memory
+                overlap_global = global_np[-(self.req_len - 1):].copy() # only copy the overlap
 
 def get_dataset(date: str, type: str) -> LOBDataset | None:
     match type:
         case 'train':
             return LOBDataset(
-                Path(f"data/splits/{date}/train/train.parquet"),
+                Path(f"data/splits/{date}/train"),
             )
         case 'val':
             return LOBDataset(
-                Path(f"data/splits/{date}/val/val.parquet"),
+                Path(f"data/splits/{date}/val"),
             )
         case 'test':
             return LOBDataset(
-                Path(f"data/splits/{date}/test/test.parquet"),
+                Path(f"data/splits/{date}/test"),
             )
         case _:
             return None
