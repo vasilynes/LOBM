@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from data.dataset import get_dataset
-from models.lob_nn import LOB_NN
+from src.data.dataset import get_dataset
+from src.models.lob_nn import LOB_NN
 from pathlib import Path
 from datetime import datetime
 import os
