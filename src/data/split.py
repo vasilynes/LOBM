@@ -31,7 +31,7 @@ class ShardWriter:
             shard_size: int,
             overlap_len: int
         ):
-        if shard_size > overlap_len:
+        if shard_size <= overlap_len:
             raise ValueError('Shard size must be strictly greater than overlap length.')
         
         self.output_dir = output_dir / split_name
