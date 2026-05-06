@@ -13,6 +13,8 @@ class LOB_NN(nn.Module):
         tensors are causally padded at the beginning of the sequence.
         The results are concatenated along the second dimension
         and squeezed with permutation to a tensor (Batch, Time, 256).
+        Engineered features are added to the tensor, resulting in 
+        (Batch, Time, 256 + num_global) dimensions.
 
         The output is fed to the 1-Layer (64) GRU network, whose  
         hidded states are then passed through temporal pooling Linear 
@@ -21,7 +23,7 @@ class LOB_NN(nn.Module):
         Linear layers (64 -> 32 -> output_dim), where output_dim 
         defaults to 1. The resulting tensor is of dim (Batch, output_dim).
     """
-    def __init__(self, output_dim=1):
+    def __init__(self, output_dim=1, num_global=11):
         super(LOB_NN, self).__init__()
 
         # Calculate microstructure features for each Level
@@ -65,7 +67,12 @@ class LOB_NN(nn.Module):
             nn.BatchNorm2d(64)
         )
 
-        self.gru = nn.GRU(input_size=256, hidden_size=64, num_layers=1, batch_first=True)
+        self.gru = nn.GRU(
+            input_size=256 + num_global, 
+            hidden_size=64, 
+            num_layers=1, 
+            batch_first=True
+        )
 
         self.attn = nn.Linear(64, 1)
 
@@ -77,15 +84,20 @@ class LOB_NN(nn.Module):
             nn.Linear(32, output_dim)
         )
 
-    def forward(self, x):
-        x = self.conv_micro(x)
+    def forward(self, x_lob, x_global):
+        x = self.conv_micro(x_lob)
         x = self.conv_macro(x)
         x_inp1 = self.inp1(x)
         x_inp2 = self.inp2(x)
         x_inp3 = self.inp3(x)
         x_pool = self.inp_pool(x)
+
+        # (Batch, 256, Time, 1)
         x_cat = torch.cat([x_inp1, x_inp2, x_inp3, x_pool], dim=1)
-        x = x_cat.squeeze(-1).permute(0, 2, 1)
+        # (Batch, Time, 256)
+        cnn_out = x_cat.squeeze(-1).permute(0, 2, 1)
+        # (Batch, Time, 256 + num_global)
+        x = torch.cat([cnn_out, x_global], dim=-1)
 
         h, _ = self.gru(x)
         attn = torch.softmax(self.attn(h), dim=1)
