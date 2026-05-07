@@ -80,6 +80,47 @@ class LOB_NN(nn.Module):
             nn.Linear(32, output_dim)
         )
 
+        self._fwd_stats: dict[str, float] = {}
+        self._grad_norms: dict[str, float] = {}
+        self._register_grad_hooks() 
+    
+    def _register_grad_hooks(self):
+        """
+        Register backward hooks on the weights of CNN and GRU, 
+        saving L2 norms into self._grad_norms.
+        """
+        tracked = {
+            'cnn_macro/weight': self.conv_macro[0].weight,
+            'gru/weight_ih': self.gru.weight_ih_l0,
+            'gru/weight_hh': self.gru.weight_hh_l0
+        }
+        for k, p in tracked.items():
+            p.register_hook(
+                lambda g, k=k: self._grad_norms.update({k: g.norm().item()})
+            )
+
+    def _record_fwd_stats(self, cnn_out: torch.Tensor, h: torch.Tensor):
+        """
+        Compute and cache forward-pass stats for CNN output 
+        and GRU hidden state tensors. 
+        """
+        c = cnn_out.detach()
+        g = h.detach()
+        self._fwd_stats = {
+            'cnn_out/mean':    c.mean().item(),
+            'cnn_out/std':     c.std().item(),
+            'gru_h/mean':      g.mean().item(),
+            'gru_h/std':       g.std().item(),
+        }
+
+    def diagnose(self) -> dict[str, float]:
+        """
+        Return stats of the last forward-pass output stats
+        and the last backward-pass gradient stats. If backward 
+        pass is not complete, gradient entries are absent.
+        """
+        return {**self._fwd_stats, **self._grad_norms}
+
     def forward(self, x_lob, x_global, val=False):
         x = self.conv_micro(x_lob)
         x = self.conv_macro(x)
@@ -96,6 +137,10 @@ class LOB_NN(nn.Module):
         x = torch.cat([cnn_out, x_global], dim=-1)
 
         h, _ = self.gru(x)
+        # Record stats before normalization, so that
+        # LN doesn't distort them
+        self._record_fwd_stats(cnn_out, h)
+
         h_norm = self.ln(h)
         attn = torch.softmax(self.attn(h_norm), dim=1)
         h_comb = (attn * h).sum(dim=1) 
