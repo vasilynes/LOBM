@@ -71,7 +71,6 @@ class LOBDataset(IterableDataset):
 
         self.req_len = self.seq_len + self.horizon
         self.shard_files = sorted(self.split_dir.glob('*.parquet'))
-        print(self.shard_files)
         self.global_cols_mask = list(range(len(GLOBAL_COLS))) 
         self.global_cols_mask.pop(MID_PRICE_INDEX)  # Exclude mid price
 
@@ -98,7 +97,6 @@ class LOBDataset(IterableDataset):
             return self.shard_files[start_idx : end_idx]
 
     def __iter__(self):
-        print(self._worker_files)
         for file_path in self._worker_files:
             self.pf = pq.ParquetFile(file_path)
             overlap_lob = None
