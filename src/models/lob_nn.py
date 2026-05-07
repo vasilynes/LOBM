@@ -80,7 +80,7 @@ class LOB_NN(nn.Module):
             nn.Linear(32, output_dim)
         )
 
-    def forward(self, x_lob, x_global):
+    def forward(self, x_lob, x_global, val=False):
         x = self.conv_micro(x_lob)
         x = self.conv_macro(x)
         x_inp1 = self.inp1(x)
@@ -101,5 +101,7 @@ class LOB_NN(nn.Module):
         h_comb = (attn * h).sum(dim=1) 
         pred = self.fc(h_comb)
 
+        if val:
+            return pred, attn
         return pred
     
