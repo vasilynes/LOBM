@@ -94,7 +94,7 @@ class TrainingNN:
                     global_seq = global_seq.to(self.device, non_blocking=True)
                     target_bps = target_bps.to(self.device, non_blocking=True)
 
-                    pred_res, attn = self.model(lob_seq, global_seq, val=True)
+                    pred_res, attn = self.model(lob_seq, global_seq)
                     loss = self.loss_fn(pred_res, target_bps)
 
                     batch_size_val = lob_seq.size(0)
