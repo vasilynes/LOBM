@@ -61,7 +61,7 @@ class TrainingNN:
                 target_bps = target_bps.to(self.device, non_blocking=True)
 
                 self.optimizer.zero_grad()
-                pred_res = self.model(lob_seq, global_seq)
+                pred_res, _ = self.model(lob_seq, global_seq)
                 loss = self.loss_fn(pred_res, target_bps)
                 loss.backward()  
                 total_norm = nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=GRAD_MAX_NORM)

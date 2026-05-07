@@ -121,7 +121,7 @@ class LOB_NN(nn.Module):
         """
         return {**self._fwd_stats, **self._grad_norms}
 
-    def forward(self, x_lob, x_global, val=False):
+    def forward(self, x_lob, x_global):
         x = self.conv_micro(x_lob)
         x = self.conv_macro(x)
         x_inp1 = self.inp1(x)
@@ -145,8 +145,7 @@ class LOB_NN(nn.Module):
         attn = torch.softmax(self.attn(h_norm), dim=1)
         h_comb = (attn * h).sum(dim=1) 
         pred = self.fc(h_comb)
+  
+        return pred, attn
 
-        if val:
-            return pred, attn
-        return pred
     
