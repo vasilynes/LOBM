@@ -112,7 +112,7 @@ class TrainingNN:
             val_loss /= n_samples_val
             for k in attn_stats:
                 attn_stats[k] /= n_samples_val
-            epoch_attn_profile /= n_samples_val
+            epoch_attn_profile = epoch_attn_profile / n_samples_val
 
             wandb.log({
                 'epoch': epoch + 1,
