@@ -178,13 +178,15 @@ if __name__ == '__main__':
         shuffle=False, 
         pin_memory=True,
         num_workers=min(4, os.cpu_count() or 1),
+        persistent_workers=True
     )
     val_loader = DataLoader(
         val_d, 
         batch_size=None, 
         shuffle=False, 
         pin_memory=True,
-        num_workers=0   # Enforce sequential processing of validation batches
+        num_workers=1,   # Enforce sequential processing of validation batches
+        persistent_workers=True
     )
 
     model = LOB_NN()

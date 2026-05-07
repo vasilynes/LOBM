@@ -32,9 +32,23 @@ class LOBDataset(IterableDataset):
         and yields pre-made batches of size nn_batch_size for 
         a neural network. 
 
-        Crucially: this IterableDataset collates batches manually,
-        the wrapping DataLoader must be called with batch_size=None.
+        NOTE: This IterableDataset collates batches manually,
+        the wrapping DataLoader must be called with:
+        -----------------------------------------------------------------
+            batch_size=None.
+        -----------------------------------------------------------------
+        NOTE: This IterableDataset uses Polars/PyArrow libraries, 
+        which utilize multithreading. If LOBDataset is instantiated 
+        in the main process (e.g., num_workers=0), the libraries initialize 
+        thread pools bound to the main process. Hence, when PyTorch DataLoader 
+        calls fork(), the thread pools will be copied, but the threads 
+        themselves will not be copied, causing a silent deadlock.
+        To use safely, the dataset must be wrapped in a DataLoader with:
+        -----------------------------------------------------------------
+            num_workers > 0 -- to isolate thread pools from the main process,
 
+            persistent_workers=True -- to prevent forking across epochs.
+        -----------------------------------------------------------------
         The logic of chunk processing: 
             - Create a polars df from the chunk,
             - Extract LOB features (prices/quantities),
