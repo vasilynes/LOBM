@@ -9,6 +9,9 @@ from datetime import datetime
 import os
 import wandb
 
+GRAD_MAX_NORM = 1.0
+BATCH = 1024
+
 class TrainingNN:
     def __init__(
             self, 
@@ -47,6 +50,7 @@ class TrainingNN:
 
     def initiate(self):
         best_val_loss = float('inf')
+        global_step = 0
         for epoch in range(self.epochs):
             self.model.train()
             train_loss = 0.0
@@ -60,7 +64,17 @@ class TrainingNN:
                 pred_res = self.model(lob_seq, global_seq)
                 loss = self.loss_fn(pred_res, target_bps)
                 loss.backward()  
-                nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.)
+                total_norm = nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=GRAD_MAX_NORM)
+                
+                wandb.log(
+                    {
+                        'step/loss': loss.item(),
+                        'step/grad_total_norm': total_norm.item(),
+                        **{f"step/{k}": v for k, v in self.model.diagnose().items()}
+                    },
+                    step=global_step
+                )
+                global_step += 1
                 self.optimizer.step()
 
                 batch_size = lob_seq.size(0)
@@ -100,9 +114,10 @@ class TrainingNN:
                 attn_stats[k] /= n_samples_val
             epoch_attn_profile /= n_samples_val
 
-            logs = {
+            wandb.log({
                 'epoch': epoch + 1,
                 'train/loss': train_loss,
+                'train/lr': self.scheduler.get_last_lr()[0],
                 'val/loss': val_loss,
                 'val/attn_max_mean': attn_stats['max_attn'],
                 'val/attn_entropy': attn_stats['entropy'],
@@ -112,16 +127,8 @@ class TrainingNN:
                     keys=['attention'],
                     title='Attention Profile',
                     xname='Time step'
-                ),
-                'train/lr': self.lr,
-                'train/weight_decay': self.weight_decay,
-                'train/epochs': self.epochs,
-                'train/batch_size': 1024,
-                'train/loss': 'HuberLoss(delta=1.0)',
-                'train/scheduler': 'CosineAnnealingLR',
-                'train/grad_clip': 1.0,
-            }
-            wandb.log(logs, step=epoch + 1)
+                )
+            }, step=global_step)
 
             print(
                 f"Epoch {epoch+1}/{self.epochs} "
@@ -142,10 +149,25 @@ if __name__ == '__main__':
     results_dir = Path(f"experiments/lob_nn/run_{timestamp}")
     results_dir.mkdir(parents=True, exist_ok=True)
 
+    lr = 1e-4,
+    weight_decay = 1e-4,
+    delta = 1.0
+    epochs = 10
+
     wandb.init(project='LOBM', name=f"run_{timestamp}", dir=str(results_dir))
+    wandb.config.update({
+        'lr': lr,
+        'weight_decay': weight_decay,
+        'epochs': epochs,
+        'batch_size': BATCH,
+        'loss_fn': 'HuberLoss',
+        'loss_delta': delta,
+        'scheduler': 'CosineAnnealingLR',
+        'grad_clip': GRAD_MAX_NORM,
+    })
 
     print('Starting training...')
-    epochs = 10
+    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     train_d = get_dataset('2026-04-26', 'train')
