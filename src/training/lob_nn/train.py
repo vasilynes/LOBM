@@ -165,7 +165,7 @@ if __name__ == '__main__':
     results_dir.mkdir(parents=True, exist_ok=True)
 
     lr = 1e-4
-    weight_decay = 1e-4
+    weight_decay = 1e-3
     delta = 1.0
     epochs = 100
 
