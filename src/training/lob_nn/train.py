@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime
 import os
 import wandb
+from collections import defaultdict
 
 GRAD_MAX_NORM = 1.0
 BATCH = 1024
@@ -35,7 +36,9 @@ class TrainingNN:
         self.lr = lr
 
         self.optimizer = optim.AdamW(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=epochs)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode='min', factor=0.5, patience=5
+        )
         self.loss_fn = nn.HuberLoss(delta=delta)
 
     @staticmethod
@@ -50,7 +53,8 @@ class TrainingNN:
 
     def initiate(self):
         best_val_loss = float('inf')
-        global_step = 0
+        accum = defaultdict(list)
+        patience = 0
         for epoch in range(self.epochs):
             self.model.train()
             train_loss = 0.0
@@ -65,16 +69,10 @@ class TrainingNN:
                 loss = self.loss_fn(pred_res, target_bps)
                 loss.backward()  
                 total_norm = nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=GRAD_MAX_NORM)
-                
-                wandb.log(
-                    {
-                        'step/loss': loss.item(),
-                        'step/grad_total_norm': total_norm.item(),
-                        **{f"step/{k}": v for k, v in self.model.diagnose().items()}
-                    },
-                    step=global_step
-                )
-                global_step += 1
+
+                accum['grad_total_norm'].append(total_norm.item())
+                for k, v in self.model.diagnose().items():
+                    accum[k].append(v)
                 self.optimizer.step()
 
                 batch_size = lob_seq.size(0)
@@ -116,8 +114,9 @@ class TrainingNN:
 
             wandb.log({
                 'epoch': epoch + 1,
+                **{f"epoch/{k}": sum(v) / len(v) for k, v in accum.items()},
                 'train/loss': train_loss,
-                'train/lr': self.scheduler.get_last_lr()[0],
+                'train/lr': self.optimizer.param_groups[0]['lr'],
                 'val/loss': val_loss,
                 'val/attn_max_mean': attn_stats['max_attn'],
                 'val/attn_entropy': attn_stats['entropy'],
@@ -128,7 +127,8 @@ class TrainingNN:
                     title='Attention Profile',
                     xname='Time step'
                 )
-            }, step=global_step)
+            }, step=epoch)
+            accum.clear()
 
             print(
                 f"Epoch {epoch+1}/{self.epochs} "
@@ -140,8 +140,15 @@ class TrainingNN:
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 torch.save(self.model.state_dict(), self.results_dir / 'model.pth')
+                patience = 0
+            else:
+                patience += 1
+            
+            if patience > 10:
+                print(f"Early stopping triggered at epoch {epoch+1}. Best Val Loss: {best_val_loss:.4f}")
+                break
                 
-            self.scheduler.step()
+            self.scheduler.step(val_loss)
 
 
 if __name__ == '__main__':
@@ -149,8 +156,8 @@ if __name__ == '__main__':
     results_dir = Path(f"experiments/lob_nn/run_{timestamp}")
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    lr = 1e-4,
-    weight_decay = 1e-4,
+    lr = 1e-4
+    weight_decay = 1e-4
     delta = 1.0
     epochs = 10
 
@@ -162,7 +169,7 @@ if __name__ == '__main__':
         'batch_size': BATCH,
         'loss_fn': 'HuberLoss',
         'loss_delta': delta,
-        'scheduler': 'CosineAnnealingLR',
+        'scheduler': 'ReduceLROnPlateau',
         'grad_clip': GRAD_MAX_NORM,
     })
 
@@ -197,5 +204,3 @@ if __name__ == '__main__':
     training.initiate()
     wandb.finish()
     print('Training finished.')
-                
-        
