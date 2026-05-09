@@ -9,9 +9,17 @@ from datetime import datetime
 import os
 import wandb
 from collections import defaultdict
+import argparse
 
 GRAD_MAX_NORM = 1.0
 BATCH = 1024
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Script for training LOB_NN')
+    parser.add_argument('--splits', '-s', default=None, help='Path to the folder with train/val splits')
+
+    return parser.parse_args()
+
 
 class TrainingNN:
     def __init__(
@@ -177,8 +185,11 @@ if __name__ == '__main__':
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    train_d = get_dataset('2026-04-26', 'train')
-    val_d = get_dataset('2026-04-26', 'val')
+    args = parse_args()
+    splits_path = Path(args.splits) if args.splits is not None else None
+
+    train_d = get_dataset('2026-04-26', 'train', splits_path)
+    val_d = get_dataset('2026-04-26', 'val', splits_path)
     train_loader = DataLoader(
         train_d, 
         batch_size=None, 
