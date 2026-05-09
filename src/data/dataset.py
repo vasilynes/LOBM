@@ -181,19 +181,24 @@ class LOBDataset(IterableDataset):
                 overlap_lob = lob_stack[-(self.req_len - 1):].copy()    # Do not store an entire prev chunk in memory
                 overlap_global = global_np[-(self.req_len - 1):].copy() # only copy the overlap
 
-def get_dataset(date: str, dataset_type: str) -> LOBDataset | None:
+def get_dataset(date: str, dataset_type: str, splits_path: Path | None) -> LOBDataset | None:
+    if splits_path is not None:
+        d_path = splits_path / date 
+    else:
+        d_path = Path('data/splits') / date
+
     match dataset_type:
         case 'train':
             return LOBDataset(
-                Path(f"data/splits/{date}/train"),
+                d_path / 'train',
             )
         case 'val':
             return LOBDataset(
-                Path(f"data/splits/{date}/val"),
+                d_path / 'val',
             )
         case 'test':
             return LOBDataset(
-                Path(f"data/splits/{date}/test"),
+                d_path / 'test',
             )
         case _:
             return None
