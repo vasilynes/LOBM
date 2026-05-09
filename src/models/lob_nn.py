@@ -61,16 +61,24 @@ class LOB_NN(nn.Module):
             nn.LeakyReLU(0.01),
         )
 
+        self.cnn_norm = nn.LayerNorm(256)
+
+        hidden_size = 64
+
         self.gru = nn.GRU(
             input_size=256 + num_global, 
-            hidden_size=64, 
+            hidden_size=hidden_size,
             num_layers=1, 
             batch_first=True
         )
 
-        self.ln = nn.LayerNorm(64)
+        self.gru_norm = nn.LayerNorm(hidden_size)
 
-        self.attn = nn.Linear(64, 1)
+        self.attn = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.Tanh(),
+            nn.Linear(hidden_size // 2, 1)
+        )
 
         self.fc = nn.Sequential(
             nn.Dropout(p=0.2),
@@ -133,6 +141,7 @@ class LOB_NN(nn.Module):
         x_cat = torch.cat([x_inp1, x_inp2, x_inp3, x_pool], dim=1)
         # (Batch, Time, 256)
         cnn_out = x_cat.squeeze(-1).permute(0, 2, 1)
+        cnn_out = self.cnn_norm(cnn_out)
         # (Batch, Time, 256 + num_global)
         x = torch.cat([cnn_out, x_global], dim=-1)
 
@@ -141,11 +150,9 @@ class LOB_NN(nn.Module):
         # LN doesn't distort them
         self._record_fwd_stats(cnn_out, h)
 
-        h_norm = self.ln(h)
+        h_norm = self.gru_norm(h)
         attn = torch.softmax(self.attn(h_norm), dim=1)
         h_comb = (attn * h).sum(dim=1) 
         pred = self.fc(h_comb)
   
         return pred, attn
-
-    
