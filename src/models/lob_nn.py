@@ -65,6 +65,8 @@ class LOB_NN(nn.Module):
 
         hidden_size = 64
 
+        self.gru_dropout = nn.Dropout(p=0.3)
+
         self.gru = nn.GRU(
             input_size=256 + num_global, 
             hidden_size=hidden_size,
@@ -79,6 +81,8 @@ class LOB_NN(nn.Module):
             nn.Tanh(),
             nn.Linear(hidden_size // 2, 1)
         )
+
+        self.attn_drop = nn.Dropout(p=0.15)
 
         self.fc = nn.Sequential(
             nn.Dropout(p=0.2),
@@ -144,6 +148,7 @@ class LOB_NN(nn.Module):
         cnn_out = self.cnn_norm(cnn_out)
         # (Batch, Time, 256 + num_global)
         x = torch.cat([cnn_out, x_global], dim=-1)
+        x = self.gru_dropout(x)
 
         h, _ = self.gru(x)
         # Record stats before normalization, so that
@@ -152,6 +157,7 @@ class LOB_NN(nn.Module):
 
         h_norm = self.gru_norm(h)
         attn = torch.softmax(self.attn(h_norm), dim=1)
+        attn = self.attn_drop(attn)
         h_comb = (attn * h).sum(dim=1) 
         pred = self.fc(h_comb)
   
