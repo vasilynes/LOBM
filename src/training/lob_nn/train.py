@@ -159,7 +159,7 @@ if __name__ == '__main__':
     lr = 1e-4
     weight_decay = 1e-4
     delta = 1.0
-    epochs = 10
+    epochs = 100
 
     wandb.init(project='LOBM', name=f"run_{timestamp}", dir=str(results_dir))
     wandb.config.update({
