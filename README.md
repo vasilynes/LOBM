@@ -96,11 +96,11 @@ The final linear combination of hidden states weighted by attention is then fed 
 The model is then trained with Huber loss. For more details on architecture and training, see `training_lob_nn.ipynb` notebook.
 #### XGBRegressor
 The tree-based model consists of up to 200 weak learners with maximal depth of 3. 
-It is then trained with early stopping, learning rate 0.01, subsampling and L2 regularization on weights.
+It is then trained with early stopping (patience 50), learning rate 0.01, subsampling and L2 regularization on weights.
 For details on parameters, see `src/training/xgboost/params.yaml`.
 #### KAN
 The network uses an efficient [implementation](https://github.com/Blealtan/efficient-kan) of KAN with L1 weight regularization and no pruning. 
-The networked is fit with early stopping to (shuffled) residuals of XGBRegressor predictions.
+The networked is trained for 20 epochs with early stopping on (shuffled) residuals of XGBRegressor predictions.
 The resulting dimensions are $92 \rightarrow 6 \rightarrow 1$.
 ### Results
 The resulting directional accuracy of CNN-GRU model is $61\%$.
@@ -110,14 +110,15 @@ After training XGBRegressor with three different objectives:
 * L2
 * pseudo-Huber
 
-corresponding directional accuracies were $51.11\%$, $57.85\%$, $65.66\%$.
+corresponding directional accuracies were 56.60%, 50.77%, 65.85%. 
+L2 loss quadratically penalizes outliers, so it was pre-emptively stopped gaining no accuracy.
+Pseudo-Huber loss is linear on outliers and quadratic on inliers, so it allows the model to learn "fat tails" and gain accuracy.
 
-L2 loss quadratically penalizes outliers, so the accuracy gain demonstrates that a lot of signal can be learned from fitting the "fat tails". 
-On the other hand, L1-model is theoretically guaranteed to be more robust, since it approximates the conditional median of the target, but it is close to random guessing.
-Pseudo-Huber loss allows to penalize outliers quadratically, while staying L1 on regular data, which explains its superiority here.
+On the other hand, L1-model is theoretically guaranteed to be more robust, since it approximates the conditional median of the target, but it is closer to random guessing.
 
-KAN were fit to errors of all three models with different losses, leading to either worse or mediocre results.
-For example, the dirrectional accuracy of the best model would fall to a $65.3\%$ to $66.1\%$ interval, which is obviously attributed to a random noise and an initialization bias, leading to slight overfitting on the test data. 
+KANs with L2 loss were fit to errors of all three models, leading to improvements:
+* XGB with L1: 56.60% -> 66.28%
+* XGB with L2: 50.77% -> 66.53%
+* XGB with pseudo-Huber: 65.85% -> 65.98%
 
-However, training KAN with L2 loss on L1-model residuals appeared to be better more consistently.
-Ensemble accuracy would fall into a $66.3\%$ to $66.6\%$ interval. 
+While the biggest improvement was for XGB(L2) + KAN(L2), XGB with L1 loss is theoretically more robust. The difference can also be attributed to random noise.
