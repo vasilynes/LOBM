@@ -109,6 +109,7 @@ After training XGBRegressor with three different objectives:
 * L1
 * L2
 * pseudo-Huber
+
 corresponding directional accuracies were $51.11\%$, $57.85\%$, $65.66\%$.
 
 L2 loss quadratically penalizes outliers, so the accuracy gain demonstrates that a lot of signal can be learned from fitting the "fat tails". 
