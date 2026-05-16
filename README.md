@@ -106,12 +106,11 @@ The resulting dimensions are $92 \rightarrow 6 \rightarrow 1$.
 The resulting directional accuracy of CNN-GRU model is $61\%$.
 
 After training XGBRegressor with three different objectives:
-* L1
-* L2
-* pseudo-Huber
+* L1, directional accuracy: 56.60%
+* L2, directional accuracy: 50.77%
+* pseudo-Huber, directional accuracy: 65.85%
 
-corresponding directional accuracies were 56.60%, 50.77%, 65.85%. 
-L2 loss quadratically penalizes outliers, so it was pre-emptively stopped gaining no accuracy.
+L2 loss quadratically penalizes outliers, so it was pre-emptively stopped and the model gained no accuracy.
 Pseudo-Huber loss is linear on outliers and quadratic on inliers, so it allows the model to learn "fat tails" and gain accuracy.
 
 On the other hand, L1-model is theoretically guaranteed to be more robust, since it approximates the conditional median of the target, but it is closer to random guessing.
