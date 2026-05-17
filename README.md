@@ -6,8 +6,8 @@ The architecture is two-stage: the Gradient Boosted Tree (XGBoost) suggests an e
 The architecture is benchmarked against a spatial-temporal sequence model being just the Convolutional Neural Network (CNN) followed by the Gated Recurrent Unit (GRU).
 ### Motivation
 In financial time-series forecasting on LOB data, tree-based models often outperform deep models. 
-[Wang (2025)](https://arxiv.org/abs/2506.05764) and [Liu et al. (2021)](https://www.ijcai.org/proceedings/2020/628) demonstrated, that proper feature engineering and denoising allowed XGBoost to surpass a CNN-based architecture.
-This can be explained by the fact, that observed LOB features are discrete and contain a lot of microstructural noise.
+[Wang (2025)](https://arxiv.org/abs/2506.05764) and [Liu et al. (2021)](https://www.ijcai.org/proceedings/2020/628) demonstrated that proper feature engineering and denoising allowed XGBoost to surpass a CNN-based architecture.
+This can be explained by the fact that observed LOB features are discrete and contain a lot of microstructural noise.
 High-frequency non-informative features hurt MLP-like deep learners and data non-smoothness is against their inductive bias, as indicated in [Grinsztajn (2022)](https://arxiv.org/abs/2207.08815).
 
 Despite robustness, XGBoost are step-functions, hence continuous dynamics extrapolation is against their design. However, latent market dynamics (e.g., fair value, liquidity depletion) is continuous.
@@ -90,7 +90,7 @@ Horizon 500: 13.89% of targets are strictly zero.
 ```
 `horizon=100` leads to almost 50/50 balance.
 #### Split
-Data was split in train/validation/test sets chronologically with 18h of traiding going to the training set, 4h to the validation set and 4h to the test set.
+Data was split in train/validation/test sets chronologically with 18h of trading going to the training set, 4h to the validation set and 4h to the test set.
 ### Model Architectures
 #### CNN-GRU
 The deep learner is a DeepLOB-like model consisting of spatial (per-level) and temporal (per-tick) convolutions, with a GRU layer of hidden dimension 64 and subsequent tanh-attention on the hidden states.
@@ -102,26 +102,30 @@ It is then trained with early stopping (patience 50), learning rate 0.01, subsam
 For details on parameters, see `src/training/xgboost/params.yaml`.
 #### KAN
 The network uses an efficient [implementation](https://github.com/Blealtan/efficient-kan) of KAN with L1 weight regularization and no pruning. 
-The network is trained for 20 epochs with early stopping on the same LOB feature set (but shuffled) to predict the residual error of the XGBRegressor.
+The network is trained for 20 epochs with early stopping on the same LOB feature set to predict the residual error of the XGBRegressor.
+Since KAN is a feed-forward model, the batches are shuffled, but the global chronological train -> val -> split order is preserved.
 The resulting dimensions are $92 \rightarrow 6 \rightarrow 1$.
 ### Results
-The resulting directional accuracy of CNN-GRU model is 61.00%.
+Directional accuracy (DA) for subsequent models is calculated as `sign(predictions) == sign(target)`.
+
+The resulting 2-class (up/down) DA of CNN-GRU model is 61.00%.
 
 After training XGBRegressor with three different objectives:
 * L1
 * L2
 * pseudo-Huber
 
-directional accuracy (DA) was calculated as `sign(predictions) == sign(target)`.
-Corresponding 2-class (up/down) DAs are 56.60%, 50.77% and 65.85%.
+corresponding 2-class (up/down) DAs are 56.60%, 50.77% and 65.85%.
+
 Corresponding 3-class (up/flat/down) DAs are 43.75%, 37.64% and 48.82%.
-This demonstrates, that the model was able to learn the signal of active market successfully. 
+
+This demonstrates that the model was able to learn the signal of active market successfully. 
 However, to predict flat movements, some $\epsilon$-thresholding on predictions is required:
 `-ϵ < pred < ϵ => flat`.
 
 L2 loss quadratically penalizes outliers, so it was pre-emptively stopped and the model gained no accuracy.
 Pseudo-Huber loss is linear on outliers and quadratic on inliers, so it allows the model to learn "fat tails" and gain DA.
-On the other hand, L1-model is theoretically guaranteed to be more robust, since it approximates the conditional median of the target, but it is closer to random guessing, than pseudo-Huber.
+On the other hand, L1-model is theoretically guaranteed to be more robust, since it approximates the conditional median of the target, but it is closer to random guessing than pseudo-Huber.
 
 KANs with L2 loss were fit to errors of all three models, leading to improvements:
 * XGB with L1: 56.60% -> 66.28% (2-class DA)
