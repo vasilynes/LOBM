@@ -129,4 +129,5 @@ KANs with L2 loss were fit to errors of all three models, leading to improvement
 * XGB with pseudo-Huber: 65.85% -> 65.98% (2-class DA)
 
 2-class DA increased to 66%, regardless of how badly the XGBRegressor performed.
+
 Not only does the ensemble outperform the spatial-temporal deep learner, but it also allows to recover the missing DA from fitting the errors of suboptimal models, proving that combining rigid tree-based thresholding with continuous spline approximation is effective for microstructure forecasting.
