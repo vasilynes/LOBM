@@ -18,7 +18,7 @@ Unlike standard MLPs, KAN here suggests two advantages:
 
 ### Data & Feature Engineering
 To train the models, BTCUSDT spot is sampled every 100 ms for 26 hours; a tabular dataset is constructed from this data with the following features:
-* bid/Ask price and quantity for 20 levels
+* bid/ask price and quantity for 20 levels
 * per-level OFI for the first 10 levels
 * mid price
 * spread
@@ -89,6 +89,8 @@ Horizon 100: 47.33% of targets are strictly zero.
 Horizon 500: 13.89% of targets are strictly zero.
 ```
 `horizon=100` leads to almost 50/50 balance.
+#### Split
+Data was split in train/validation/test sets chronologically with 18h of traiding going to the training set, 4h to the validation set and 4h to the test set.
 ### Model Architectures
 #### CNN-GRU
 The deep learner is a DeepLOB-like model consisting of spatial (per-level) and temporal (per-tick) convolutions, with a GRU layer of hidden dimension 64 and subsequent tanh-attention on the hidden states.
@@ -100,24 +102,31 @@ It is then trained with early stopping (patience 50), learning rate 0.01, subsam
 For details on parameters, see `src/training/xgboost/params.yaml`.
 #### KAN
 The network uses an efficient [implementation](https://github.com/Blealtan/efficient-kan) of KAN with L1 weight regularization and no pruning. 
-The networked is trained for 20 epochs with early stopping on (shuffled) residuals of XGBRegressor predictions.
+The network is trained for 20 epochs with early stopping on the same LOB feature set (but shuffled) to predict the residual error of the XGBRegressor.
 The resulting dimensions are $92 \rightarrow 6 \rightarrow 1$.
 ### Results
-The resulting directional accuracy of CNN-GRU model is $61\%$.
+The resulting directional accuracy of CNN-GRU model is 61.00%.
 
 After training XGBRegressor with three different objectives:
-* L1, directional accuracy: 56.60%
-* L2, directional accuracy: 50.77%
-* pseudo-Huber, directional accuracy: 65.85%
+* L1
+* L2
+* pseudo-Huber
+
+directional accuracy (DA) was calculated as `sign(predictions) == sign(target)`.
+Corresponding 2-class (up/down) DAs are 56.60%, 50.77% and 65.85%.
+Corresponding 3-class (up/flat/down) DAs are 43.75%, 37.64% and 48.82%.
+This demonstrates, that the model was able to learn the signal of active market successfully. 
+However, to predict flat movements, some $\epsilon$-thresholding on predictions is required:
+`-ϵ < pred < ϵ => flat`.
 
 L2 loss quadratically penalizes outliers, so it was pre-emptively stopped and the model gained no accuracy.
-Pseudo-Huber loss is linear on outliers and quadratic on inliers, so it allows the model to learn "fat tails" and gain accuracy.
-
-On the other hand, L1-model is theoretically guaranteed to be more robust, since it approximates the conditional median of the target, but it is closer to random guessing.
+Pseudo-Huber loss is linear on outliers and quadratic on inliers, so it allows the model to learn "fat tails" and gain DA.
+On the other hand, L1-model is theoretically guaranteed to be more robust, since it approximates the conditional median of the target, but it is closer to random guessing, than pseudo-Huber.
 
 KANs with L2 loss were fit to errors of all three models, leading to improvements:
-* XGB with L1: 56.60% -> 66.28%
-* XGB with L2: 50.77% -> 66.53%
-* XGB with pseudo-Huber: 65.85% -> 65.98%
+* XGB with L1: 56.60% -> 66.28% (2-class DA)
+* XGB with L2: 50.77% -> 66.53% (2-class DA)
+* XGB with pseudo-Huber: 65.85% -> 65.98% (2-class DA)
 
-While the biggest improvement was for XGB(L2) + KAN(L2), XGB with L1 loss is theoretically more robust. The difference can also be attributed to random noise.
+2-class DA increased to 66%, regardless of how badly the XGBRegressor performed.
+Not only does the ensemble outperform the spatial-temporal deep learner, but it also allows to recover the missing DA from fitting the errors of suboptimal models, proving that combining rigid tree-based thresholding with continuous spline approximation is effective for microstructure forecasting.
